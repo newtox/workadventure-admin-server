@@ -17,6 +17,32 @@ export interface RoomDescription {
 
 let cached: { at: number; rooms: RoomDescription[] } | undefined;
 
+const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+
+/** Copies a map inside the map storage. Returns false when the destination already exists. */
+export async function copyMap(source: string, destination: string): Promise<boolean> {
+    const res = await fetch(`${config.internalMapStorageUrl}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.mapStorageToken}` },
+        body: JSON.stringify({ source, destination }),
+        signal: AbortSignal.timeout(10_000),
+    });
+    cached = undefined;
+    if (res.status === 409) return false;
+    if (!res.ok) throw new Error(`map-storage copy failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    return true;
+}
+
+export async function deleteMap(path: string): Promise<void> {
+    const res = await fetch(`${config.internalMapStorageUrl}/${encodePath(path)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${config.mapStorageToken}` },
+        signal: AbortSignal.timeout(10_000),
+    });
+    cached = undefined;
+    if (!res.ok && res.status !== 404) throw new Error(`map-storage delete failed: ${res.status}`);
+}
+
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 const num = (v: unknown) => (typeof v === "number" ? v : undefined);
 

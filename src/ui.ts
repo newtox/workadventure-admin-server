@@ -5,15 +5,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 import { bans, customWokas, listCustomWokas, listReports, listUsers, reports, rooms, users, type Access, type CustomWoka, type RoomSettings } from "./db.js";
-import { createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled } from "./access.js";
-import { listRooms } from "./mapStorage.js";
+import { changeRoomStyle, createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled, roomStyles, type RoomStyle } from "./access.js";
+import { deleteMap, listRooms } from "./mapStorage.js";
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
 import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
 import { personalTag } from "./api.js";
-import { langFrom, t, type Lang } from "./i18n.js";
+import { langFrom, styleLabel, t, type Lang } from "./i18n.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -500,7 +500,7 @@ async function profilePage(accessToken: string | null, browserLang: Lang, messag
             .join("")}</div>
 <p class="hint">${text.avatarHint}</p>
 ${tag ? `<h2>${text.yourTag}</h2><p class="hint"><code>${esc(tag)}</code> – ${text.yourTagHint}</p>` : ""}
-${personalRoomSection(viewer, accessToken!, lang)}`;
+${personalRoomSection(viewer, accessToken!, lang, await roomStyles())}`;
     }
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
@@ -517,10 +517,30 @@ body{padding:16px 20px}code{background:rgba(255,255,255,.12);padding:1px 6px;bor
 label{display:block;margin:10px 0 4px;color:rgba(255,255,255,.7)}input[type=text],textarea{width:100%;box-sizing:border-box;padding:7px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);color:#fff;font:inherit}
 .checks{display:flex;flex-wrap:wrap;gap:4px 14px}.checks label{display:flex;gap:6px;align-items:center;margin:0;color:#fff}
 .msg{background:rgba(47,179,111,.2);border-left:3px solid #2fb36f;padding:8px 12px;border-radius:4px}.sub{color:rgba(255,255,255,.5)}
+.styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin:8px 0}
+.style{display:block;margin:0;cursor:pointer}.style input{position:absolute;opacity:0}
+.style span{display:block;border:2px solid transparent;border-radius:8px;overflow:hidden;background:rgba(0,0,0,.25)}
+.style img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;image-rendering:pixelated;background:rgba(255,255,255,.06)}
+.style b{display:block;padding:4px 8px;font-weight:500;color:#fff}.style small{color:rgba(255,255,255,.55);margin:0;display:inline}
+.style input:checked+span{border-color:${WA_BLUE}}.style input:focus-visible+span{outline:2px solid #fff}
+details{margin-top:14px}summary{cursor:pointer;color:rgba(255,255,255,.8)}
+.confirm{display:flex!important;gap:8px;align-items:center;color:#fff!important}
 </style></head><body>${body}</body></html>`;
 }
 
-function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string, lang: Lang): string {
+function stylePicker(styles: RoomStyle[], lang: Lang, selected: string | null | undefined, current?: string | null): string {
+    if (styles.length < 2) return "";
+    const chosen = styles.some((s) => s.key === selected) ? selected : styles[0]!.key;
+    return `<div class="styles">${styles
+        .map(
+            (s) => `<label class="style"><input type="radio" name="style" value="${esc(s.key)}"${s.key === chosen ? " checked" : ""}><span>${
+                s.thumbnail ? `<img src="${esc(s.thumbnail)}" alt="">` : ""
+            }<b>${esc(styleLabel(s.key, lang))}${s.key === current ? ` <small>(${t(lang).currentStyle})</small>` : ""}</b></span></label>`,
+        )
+        .join("")}</div>`;
+}
+
+function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string, lang: Lang, styles: RoomStyle[]): string {
     if (!personalRoomsEnabled()) return "";
     const text = t(lang);
     const room = rooms.byOwner(viewer.identifier);
@@ -528,7 +548,7 @@ function personalRoomSection(viewer: { identifier: string; tags: string[] }, acc
     if (!room) {
         if (!mayCreatePersonalRoom(viewer)) return "";
         return `<h2>${text.yourRoom}</h2><div class="box"><p class="hint" style="margin:0">${text.roomIntro}</p>
-<form method="post" action="/profile/room">${token}<button class="btn" type="submit">${text.createRoom}</button></form></div>`;
+<form method="post" action="/profile/room">${token}${styles.length > 1 ? `<p class="hint" style="margin:10px 0 0">${text.chooseStyle}</p>` : ""}${stylePicker(styles, lang, null)}<button class="btn" type="submit">${text.createRoom}</button></form></div>`;
     }
     const enter = config.playUrl ? `${config.playUrl}/~/${room.path.split("/").map(encodeURIComponent).join("/")}` : `/~/${room.path}`;
     return `<h2>${text.yourRoom}</h2><div class="box">
@@ -538,7 +558,15 @@ function personalRoomSection(viewer: { identifier: string; tags: string[] }, acc
 <label for="name">${text.name}</label><input id="name" name="name" type="text" maxlength="60" value="${esc(room.name ?? "")}">
 <label>${text.whoMayEnter}</label>
 ${accessFields(room.access, { exclude: viewer.identifier, opaque: true, lang })}
-<button class="btn" type="submit">${text.save}</button></form></div>`;
+<button class="btn" type="submit">${text.save}</button></form>
+${
+    styles.length > 1
+        ? `<details><summary>${text.changeStyle}</summary><form method="post" action="/profile/room/style">${token}
+<p class="hint" style="margin:8px 0 0">${text.changeStyleHint}</p>${stylePicker(styles, lang, styles.find((s) => s.key !== (room.style ?? "holz"))?.key, room.style ?? "holz")}
+<label class="confirm"><input type="checkbox" name="confirm" value="1" required> ${text.changeStyleConfirm}</label>
+<button class="btn secondary" type="submit">${text.changeStyle}</button></form></details>`
+        : ""
+}</div>`;
 }
 
 // ---------- login ----------
@@ -650,7 +678,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             res.end(await profilePage(accessToken, browserLang, message));
         };
         if (req.method === "GET" && p === "/profile") return sendProfile(url.searchParams.get("accessToken"));
-        if (req.method === "POST" && (p === "/profile/room" || p === "/profile/room/settings")) {
+        if (req.method === "POST" && (p === "/profile/room" || p === "/profile/room/settings" || p === "/profile/room/style")) {
             const form = await readForm(req);
             const accessToken = form.get("accessToken");
             const identity = await identityFromAccessToken(accessToken ?? undefined);
@@ -661,12 +689,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
                 const lang: Lang = stored === "de" || stored === "en" ? stored : browserLang;
                 if (!mayCreatePersonalRoom(viewer)) throw new HttpError(403, t(lang).forbidden);
                 const name = identity.username ?? identity.name ?? identity.email.split("@")[0]!;
-                const room = await createPersonalRoom(identity.email, name, lang);
+                const room = await createPersonalRoom(identity.email, name, lang, form.get("style"));
                 console.info(`personal room ${room.path} created for ${identity.email}`);
                 return sendProfile(accessToken, (text) => text.roomCreated);
             }
             const room = rooms.byOwner(identity.email);
             if (!room) return sendProfile(accessToken);
+            if (p === "/profile/room/style") {
+                const style = form.get("style");
+                if (!style || form.get("confirm") !== "1" || style === (room.style ?? "holz")) return sendProfile(accessToken);
+                const updated = await changeRoomStyle(room, style);
+                console.info(`personal room ${room.path} of ${identity.email} switched to style ${updated.style}`);
+                return sendProfile(accessToken, (text) => text.styleChanged);
+            }
             const access = accessFromForm(form, true);
             access.users = (access.users ?? []).filter((u) => u.toLowerCase() !== identity.email!.toLowerCase());
             rooms.save({ ...room, name: (form.get("name") ?? "").trim().slice(0, 60) || room.name, access });
@@ -709,13 +744,7 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
             checkCsrf(session, form.get("csrf"));
             if (p === "/rooms/delete") {
                 if (!current?.owner) throw new HttpError(400, "Nur eigene Zimmer können gelöscht werden.");
-                if (config.mapStorageToken) {
-                    await fetch(`${config.internalMapStorageUrl}/${path.split("/").map(encodeURIComponent).join("/")}`, {
-                        method: "DELETE",
-                        headers: { Authorization: `Bearer ${config.mapStorageToken}` },
-                        signal: AbortSignal.timeout(10_000),
-                    }).catch((err) => console.warn("map-storage delete failed:", err));
-                }
+                if (config.mapStorageToken) await deleteMap(path).catch((err) => console.warn("map-storage delete failed:", err));
                 rooms.remove(path);
                 return html(res, 200, await roomsPage(session, "Zimmer gelöscht."));
             }
@@ -726,6 +755,7 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
                 access: accessFromForm(form),
                 hidden: form.get("hidden") === "1",
                 owner: current?.owner ?? null,
+                style: current?.style ?? null,
             };
             rooms.save(updated);
             return html(res, 200, roomEditPage(session, path, updated, mapName, "Gespeichert."));

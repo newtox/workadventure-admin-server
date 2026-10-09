@@ -64,6 +64,12 @@ const TEXTS = {
         saved: "Gespeichert.",
         roomCreated: "Dein Zimmer ist fertig. Lege fest, wer rein darf, und richte es ein.",
         roomName: (owner: string) => `Zimmer von ${owner}`,
+        chooseStyle: "Such dir einen Stil aus:",
+        changeStyle: "Stil wechseln",
+        changeStyleHint: "Du bekommst eine frische Kopie im neuen Stil. Alles, was du eingerichtet hast, ist danach weg. Name und Zutrittsrechte bleiben.",
+        changeStyleConfirm: "Ja, meine Einrichtung darf verloren gehen",
+        styleChanged: "Neuer Stil ist da. Betritt dein Zimmer neu, um ihn zu sehen.",
+        currentStyle: "aktuell",
         forbidden: "Keine Berechtigung",
         bannedTitle: "Gesperrt",
         bannedSubtitle: "Du wurdest von dieser Welt gesperrt.",
@@ -104,6 +110,12 @@ const TEXTS = {
         saved: "Saved.",
         roomCreated: "Your room is ready. Choose who may enter and start decorating.",
         roomName: (owner: string) => `${owner}'s room`,
+        chooseStyle: "Pick a style:",
+        changeStyle: "Change style",
+        changeStyleHint: "You get a fresh copy in the new style. Everything you placed is gone afterwards. Name and access stay.",
+        changeStyleConfirm: "Yes, my furnishing may be lost",
+        styleChanged: "Your new style is ready. Re-enter your room to see it.",
+        currentStyle: "current",
         forbidden: "Not allowed",
         bannedTitle: "Banned",
         bannedSubtitle: "You have been banned from this world.",
@@ -128,6 +140,16 @@ const ROLE_LABELS: Record<Lang, Record<string, string>> = {
     de: { freunde: "Freunde", member: "Mitglied" },
     en: { freunde: "Friends", member: "Member" },
 };
+
+const STYLE_LABELS: Record<Lang, Record<string, string>> = {
+    de: { holz: "Holz", loft: "Loft", gemuetlich: "Gemütlich", dunkel: "Dunkel", gross: "Groß" },
+    en: { holz: "Wood", loft: "Loft", gemuetlich: "Cozy", dunkel: "Dark", gross: "Large" },
+};
+
+/** Name of a room style; styles without a translation show their key. */
+export function styleLabel(key: string, lang: Lang): string {
+    return STYLE_LABELS[lang][key] ?? key.charAt(0).toUpperCase() + key.slice(1).replace(/-/g, " ");
+}
 
 export function roleLabel(tag: string, lang: Lang): string | undefined {
     return ROLE_LABELS[lang][tag];

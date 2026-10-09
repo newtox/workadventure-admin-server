@@ -57,9 +57,9 @@ db.exec(`
     );
 `);
 // Columns added after the first release.
-for (const column of ["locale TEXT"]) {
+for (const [table, column] of [["users", "locale TEXT"], ["rooms", "style TEXT"]]) {
     try {
-        db.exec(`ALTER TABLE users ADD COLUMN ${column}`);
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
     } catch {
         // already there
     }
@@ -139,9 +139,9 @@ const statements = {
     roomByOwner: db.prepare("SELECT * FROM rooms WHERE owner = ? COLLATE NOCASE"),
     allRooms: db.prepare("SELECT * FROM rooms"),
     upsertRoom: db.prepare(`
-        INSERT INTO rooms (path, name, description, access, hidden, owner) VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO rooms (path, name, description, access, hidden, owner, style) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(path) DO UPDATE SET name = excluded.name, description = excluded.description,
-            access = excluded.access, hidden = excluded.hidden, owner = excluded.owner`),
+            access = excluded.access, hidden = excluded.hidden, owner = excluded.owner, style = excluded.style`),
     deleteRoom: db.prepare("DELETE FROM rooms WHERE path = ?"),
     ban: db.prepare(`INSERT INTO bans (identifier, reason, banned_by) VALUES (?, ?, ?)
         ON CONFLICT(identifier) DO UPDATE SET reason = excluded.reason, banned_by = excluded.banned_by`),
@@ -278,6 +278,8 @@ export interface RoomSettings {
     access: Access;
     hidden: boolean;
     owner: string | null;
+    /** Style key of a personal room ("holz", "loft", …). */
+    style?: string | null;
 }
 
 function toRoom(row: Record<string, unknown>): RoomSettings {
@@ -288,6 +290,7 @@ function toRoom(row: Record<string, unknown>): RoomSettings {
         access: parseJson<Access>(row.access, { everyone: true }),
         hidden: Number(row.hidden) === 1,
         owner: (row.owner as string | null) ?? null,
+        style: (row.style as string | null) ?? null,
     };
 }
 
@@ -304,7 +307,7 @@ export const rooms = {
         return (statements.allRooms.all() as Record<string, unknown>[]).map(toRoom);
     },
     save(r: RoomSettings) {
-        statements.upsertRoom.run(r.path, r.name, r.description, JSON.stringify(r.access), r.hidden ? 1 : 0, r.owner);
+        statements.upsertRoom.run(r.path, r.name, r.description, JSON.stringify(r.access), r.hidden ? 1 : 0, r.owner, r.style ?? null);
     },
     remove(path: string) {
         statements.deleteRoom.run(path);

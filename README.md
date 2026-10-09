@@ -57,7 +57,7 @@ All endpoints except capabilities, logout and the upload check require `Authoriz
 | `ENABLE_ISSUE_REPORT` | `false` | |
 | `ENABLE_TUTORIAL` | `true` | |
 | `UPLOAD_MAX_FILESIZE` | `10485760` | Chat upload limit in bytes |
-| `PERSONAL_ROOM_TEMPLATE` | – | Map copied for personal rooms, e.g. `maps/zimmer.wam`; enables personal rooms |
+| `PERSONAL_ROOM_TEMPLATE` | – | Map copied for personal rooms, e.g. `maps/zimmer.wam`; enables personal rooms. Further styles are found automatically: every `zimmer-stil-<key>.wam` in the same folder (known keys: `loft`, `gemuetlich`, `dunkel`, `gross`; the template itself is `holz`). Players pick a style in their profile and can switch later, which replaces the room's map |
 | `MAP_STORAGE_TOKEN` | – | Map storage API token (`MAP_STORAGE_AUTHENTICATION_TOKEN`), needed to copy the template |
 | `PERSONAL_ROOM_TAGS` | – | Roles that may create a personal room (empty: everyone logged in) |
 | `DATA_DIR` | `/data` | SQLite database and uploaded wokas (writable by UID 1000) |
