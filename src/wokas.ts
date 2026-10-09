@@ -39,6 +39,29 @@ const official: WokaList = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "woka.
 // Official wokas sit in the collection "default"; custom ones get their own, shown first.
 export const CUSTOM_COLLECTION = "custom";
 
+// WorkAdventure ships ~290 Pipoya characters but its default list only offers 24 of them.
+// The others are added as extra collections (files served by WorkAdventure itself).
+const PIPOYA: Record<string, string[]> = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "pipoya.json"), "utf8"));
+const PIPOYA_NAMES: Record<string, Record<"de" | "en", string>> = {
+    male: { de: "Männer", en: "Men" },
+    female: { de: "Frauen", en: "Women" },
+    school: { de: "Schule", en: "School" },
+    animals: { de: "Tiere", en: "Animals" },
+};
+const pipoyaId = (file: string) => "pipoya-" + file.replace(/\.png$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+function addPipoya(list: WokaList, lang: "de" | "en"): void {
+    const part = (list.woka ??= { collections: [] });
+    let position = 1;
+    for (const [group, files] of Object.entries(PIPOYA)) {
+        part.collections.push({
+            name: PIPOYA_NAMES[group]?.[lang] ?? group,
+            position: position++,
+            textures: files.map((file, i) => ({ id: pipoyaId(file), name: file.replace(/\.png$/, ""), url: `resources/characters/pipoya/${file}`, position: i })),
+        });
+    }
+}
+
 export function canUse(woka: CustomWoka, viewer: Viewer): boolean {
     const access = woka.access;
     if (access.everyone) return true;
@@ -47,8 +70,9 @@ export function canUse(woka: CustomWoka, viewer: Viewer): boolean {
 }
 
 /** The woka list a given user may choose from: all official wokas plus the custom ones they are allowed to use. */
-export function wokaListFor(viewer: Viewer): WokaList {
+export function wokaListFor(viewer: Viewer, lang: "de" | "en" = "en"): WokaList {
     const list: WokaList = structuredClone(official);
+    addPipoya(list, lang);
     const custom = listCustomWokas().filter((w) => canUse(w, viewer));
     for (const woka of custom) {
         const part = (list[woka.part] ??= { collections: [] });

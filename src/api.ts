@@ -277,7 +277,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
         case "GET /api/woka/list": {
             const identifier = queryString(q, "uuid");
             const known = identifier ? users.get(identifier) : undefined;
-            return sendJson(res, 200, wokaListFor({ identifier: identifier ?? "", tags: known?.tags ?? [] }));
+            return sendJson(res, 200, wokaListFor({ identifier: identifier ?? "", tags: known?.tags ?? [] }, known?.locale === "de" ? "de" : "en"));
         }
 
         case "GET /api/companion/list":
