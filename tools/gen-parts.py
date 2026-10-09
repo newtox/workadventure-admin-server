@@ -1,4 +1,5 @@
-# Generates recoloured woka parts (hair colours, eye colours, glasses) from WorkAdventure's own customisation sprites.
+# Generates extra woka parts: recoloured hair, eyes, glasses and hats from WorkAdventure's own customisation sprites,
+# plus the hand-drawn office and gaming accessories and headsets from gen_accessories.py.
 import os, re, sys, json, colorsys
 from PIL import Image
 
@@ -106,8 +107,8 @@ for n in (25, 27):
 extra = [f"character_eyes{n}.png" for n in range(31, 35) if os.path.exists(os.path.join(eye_dir, f"character_eyes{n}.png"))]
 collections["eyes"].append({"key": "glasses", "names": {"de": "Brillen", "en": "Glasses"}, "files": glasses, "bundled": extra})
 
-# ---------- clothes and hats in more colours ----------
-# The largest colour group of each item (its fabric) is recoloured; small details (ties, buttons) keep their colour.
+# ---------- hats in more colours ----------
+# The largest colour group of each hat (its fabric) is recoloured; small details (ties, buttons) keep their colour.
 FABRIC = {
     "red":    ({"de": "Rot", "en": "Red"},       [(70,10,15),(150,25,35),(215,60,65),(245,140,140)], 0.0),
     "blue":   ({"de": "Blau", "en": "Blue"},     [(15,25,80),(35,70,170),(75,130,230),(160,200,255)], 0.6),
@@ -146,8 +147,13 @@ def fabric_variants(folder, prefix, label_suffix, skip=()):
             items.append(name)
         cols.append({"key": key, "names": {"de": f"{names['de']} {label_suffix['de']}", "en": f"{names['en']} {label_suffix['en']}"}, "files": items})
     return cols
-collections["clothes"] = fabric_variants("character_clothes", "clothes", {"de": "(Kleidung)", "en": "(clothes)"}, skip=("pride_shirt.png",))
 collections["hat"] = fabric_variants("character_hats", "hat", {"de": "(Hüte)", "en": "(hats)"})
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gen_accessories import build
+drawn = build(OUT)
+collections["accessory"] = drawn["accessory"]
+collections["hat"] = drawn["hat"] + collections["hat"]
 
 json.dump(collections, open(os.path.join(OUT, "parts.json"), "w"), indent=1, ensure_ascii=False)
 print({k: sum(len(c["files"]) + len(c.get("bundled", [])) for c in v) for k, v in collections.items()})
