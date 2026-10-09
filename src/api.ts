@@ -46,16 +46,30 @@ function error(code: string, title: string, subtitle: string, details: string) {
 const isAnonymous = (identifier: string | undefined, accessToken: string | undefined) => !identifier || !accessToken;
 
 /** Current roles of a user: live from the OpenID provider if possible, otherwise the last known ones. */
+/**
+ * Personal tag "@name" for each logged-in user, so that the map editor's area rights
+ * (which only know tags) can also be given to single persons.
+ */
+export function personalTag(username: string | null | undefined): string | undefined {
+    const slug = (username ?? "").toLowerCase().replace(/[^a-z0-9._-]+/g, "");
+    return slug ? `@${slug}` : undefined;
+}
+
+function withPersonalTag(tags: string[], username: string | null | undefined): string[] {
+    const tag = personalTag(username);
+    return tag ? [...tags, tag] : tags;
+}
+
 async function resolveViewer(identifier: string | undefined, accessToken: string | undefined): Promise<Viewer> {
     if (!identifier) return { identifier: "", tags: [] };
     const identity = await identityFromAccessToken(accessToken);
     if (identity) {
         users.saveProfile(identifier, identity);
-        return { identifier, tags: identity.tags };
+        return { identifier, tags: withPersonalTag(identity.tags, identity.username ?? users.get(identifier)?.username) };
     }
     const known = users.get(identifier);
     if (known && accessToken) users.touch(identifier);
-    return { identifier, tags: known?.tags ?? [] };
+    return { identifier, tags: withPersonalTag(known?.tags ?? [], known?.username) };
 }
 
 function canEditMap(viewer: Viewer, playUri: URL): boolean {
@@ -315,7 +329,8 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 function knownTags(): string[] {
-    return [...new Set([...config.knownTags, ...users.allTags()])].sort();
+    const personal = users.search("", 1000).map((u) => personalTag(u.username)).filter((t): t is string => !!t);
+    return [...new Set([...config.knownTags, ...users.allTags()])].sort().concat([...new Set(personal)].sort());
 }
 
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
