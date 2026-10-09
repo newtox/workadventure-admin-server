@@ -270,8 +270,9 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
     const member = /^GET \/api\/members\/(.+)$/.exec(route);
     if (member) {
-        const user = users.get(decodeURIComponent(member[1]!));
-        if (!user) return sendJson(res, 404, { error: "not found" });
+        const id = decodeURIComponent(member[1]!);
+        // Users who have not entered a room since the admin server runs are not in the database yet.
+        const user = users.get(id) ?? { identifier: id, username: null, name: null, email: id.includes("@") ? id : null };
         return sendJson(res, 200, toMember(user));
     }
 

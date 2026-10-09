@@ -75,7 +75,7 @@ function toUser(row: Record<string, unknown> | undefined): UserRow | undefined {
 }
 
 const statements = {
-    get: db.prepare("SELECT * FROM users WHERE identifier = ?"),
+    get: db.prepare("SELECT * FROM users WHERE identifier = ? COLLATE NOCASE ORDER BY last_seen DESC LIMIT 1"),
     upsertProfile: db.prepare(`
         INSERT INTO users (identifier, username, name, email, tags) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(identifier) DO UPDATE SET
