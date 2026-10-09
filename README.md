@@ -101,7 +101,7 @@ ADMIN_API_TOKEN=<random secret>
 
 ```yaml
   workadventure-admin:
-    image: ghcr.io/newtox/workadventure-admin-server:latest
+    image: ghcr.io/newtox/wa-admin-server:latest
     restart: unless-stopped
     environment:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
