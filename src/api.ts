@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { users, reports } from "./db.js";
+import { bans, reports, rooms, users } from "./db.js";
+import { canEnter, isOwner, roomsVisibleFor, storagePath } from "./access.js";
 import { HttpError, queryList, queryString, readJson, sendEmpty, sendJson } from "./http.js";
 import { identityFromAccessToken } from "./identity.js";
-import { listRooms } from "./mapStorage.js";
 import { visitCardUrl } from "./cards.js";
 import { companionDetail, companions, wokaDetailsFor, wokaListFor, type Viewer } from "./wokas.js";
 
@@ -12,6 +12,7 @@ const CAPABILITIES = {
     "api/woka/list": "v1",
     "api/companion/list": "v1",
     "api/save-textures": "v1",
+    "api/ban": "v1",
 };
 
 function authorized(req: IncomingMessage): boolean {
@@ -59,6 +60,9 @@ async function resolveViewer(identifier: string | undefined, accessToken: string
 
 function canEditMap(viewer: Viewer, playUri: URL): boolean {
     if (!config.enableMapEditor || !/^\/~\//.test(playUri.pathname)) return false;
+    // Owners decorate their personal room themselves.
+    const path = storagePath(playUri);
+    if (path && isOwner(rooms.get(path), viewer)) return true;
     if (config.editorUsers.some((u) => u.toLowerCase() === viewer.identifier.toLowerCase())) return true;
     return viewer.tags.some((t) => config.editorTags.includes(t));
 }
@@ -134,6 +138,23 @@ async function roomAccess(query: URLSearchParams) {
 
     const anonymous = isAnonymous(identifier, accessToken);
     const viewer = await resolveViewer(identifier, accessToken);
+
+    if (identifier) {
+        const ban = bans.get(identifier);
+        if (ban) {
+            return error("BANNED", "Gesperrt", "Du wurdest von dieser Welt gesperrt.", ban.reason ? `Grund: ${ban.reason}` : "Wende dich an einen Admin, wenn du glaubst, dass das ein Fehler ist.");
+        }
+    }
+    const path = storagePath(playUri);
+    const settings = path ? rooms.get(path) : undefined;
+    if (!canEnter(settings, viewer)) {
+        return error(
+            "ROOM_ACCESS_DENIED",
+            "Kein Zutritt",
+            settings?.owner ? "Das ist ein privates Zimmer." : "Dieser Raum ist nur für bestimmte Rollen.",
+            "Geh zurück und frag den Besitzer oder einen Admin, ob du rein darfst.",
+        );
+    }
     const stored = !anonymous && identifier ? users.get(identifier) : undefined;
 
     // The account's saved woka wins; the browser's choice is used (and saved) when there is none yet.
@@ -235,8 +256,21 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             return sendEmpty(res, 204);
         }
 
-        case "GET /api/room/sameWorld":
-            return sendJson(res, 200, await listRooms());
+        case "GET /api/room/sameWorld": {
+            const bypass = queryString(q, "bypassTagFilter") === "true";
+            const tags = (queryString(q, "tags") ?? "").split(",").filter(Boolean);
+            return sendJson(res, 200, bypass ? await roomsVisibleFor(["admin"]) : await roomsVisibleFor(tags));
+        }
+
+        case "POST /api/ban": {
+            const body = await readJson(req);
+            const s = (v: unknown) => (typeof v === "string" ? v : "");
+            const target = s(body.uuidToBan);
+            if (!target) throw new HttpError(400, "Missing uuidToBan");
+            bans.add(target, s(body.message).slice(0, 500) || null, s(body.byUserUuid) || null);
+            console.info(`ban: ${s(body.byUserUuid)} banned ${target}`);
+            return sendJson(res, 200, {});
+        }
 
         case "GET /api/room/tags":
             return sendJson(res, 200, knownTags());

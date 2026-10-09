@@ -4,11 +4,13 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { customWokas, listCustomWokas, listReports, listUsers, reports, users, type CustomWoka } from "./db.js";
+import { bans, customWokas, listCustomWokas, listReports, listUsers, reports, rooms, users, type Access, type CustomWoka, type RoomSettings } from "./db.js";
+import { createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled } from "./access.js";
+import { listRooms } from "./mapStorage.js";
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
-import { identifierFromCardToken, roleStyle, WA_CONTRAST } from "./cards.js";
+import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
@@ -167,7 +169,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;
 
 function layout(title: string, session: Session | undefined, active: string, body: string): string {
     const nav = session
-        ? `<nav>${[["wokas", "Avatare"], ["members", "Mitglieder"], ["reports", "Meldungen"]]
+        ? `<nav>${[["wokas", "Avatare"], ["rooms", "Räume"], ["members", "Mitglieder"], ["reports", "Meldungen"]]
               .map(([href, label]) => `<a href="/${href}" class="${active === href ? "on" : ""}">${label}</a>`)
               .join("")}</nav><span>${esc(session.name)} · <a href="/logout">Abmelden</a></span>`
         : "";
@@ -189,6 +191,47 @@ function nameOf(identifier: string): string {
 
 function knownTags(): string[] {
     return [...new Set([...config.knownTags, ...users.allTags()])].sort();
+}
+
+// ---------- shared access form ----------
+
+const realUsers = () => listUsers().filter((u) => !u.identifier.match(/^[0-9a-f-]{36}$/));
+
+// In the players' profile page other members' emails must not end up in the HTML, so ids are replaced by opaque tokens there.
+function accessFields(access: Access, options: { everyoneLabel?: string; exclude?: string; opaque?: boolean } = {}): string {
+    const idValue = (identifier: string) => (options.opaque ? cardToken(identifier) : identifier);
+    const tagChecks = knownTags()
+        .map((t) => `<label><input type="checkbox" name="tags" value="${esc(t)}"${access.tags?.includes(t) ? " checked" : ""}> ${esc(roleStyle(t).label)}</label>`)
+        .join("");
+    const allowed = new Set((access.users ?? []).map((u) => u.toLowerCase()));
+    const known = realUsers().filter((u) => u.identifier.toLowerCase() !== options.exclude?.toLowerCase());
+    const userChecks = known
+        .map((u) => `<label><input type="checkbox" name="users" value="${esc(idValue(u.identifier))}"${allowed.has(u.identifier.toLowerCase()) ? " checked" : ""}> ${esc(u.username ?? u.name ?? u.identifier)}</label>`)
+        .join("");
+    const extra = (access.users ?? []).filter((u) => !known.some((k) => k.identifier.toLowerCase() === u.toLowerCase()) && u.toLowerCase() !== options.exclude?.toLowerCase());
+    return `<div class="checks"><label><input type="checkbox" name="everyone" value="1"${access.everyone ? " checked" : ""}> ${esc(options.everyoneLabel ?? "Alle")}</label></div>
+<label>Rollen</label><div class="checks">${tagChecks}</div>
+<label>Personen</label><div class="checks">${userChecks || '<span class="sub">Noch niemand war eingeloggt.</span>'}</div>
+<label for="more">Weitere Personen (E-Mail, eine pro Zeile)</label><textarea id="more" name="more" rows="2">${esc(extra.join("\n"))}</textarea>`;
+}
+
+function accessFromForm(form: URLSearchParams, opaque = false): Access {
+    const extra = (form.get("more") ?? "").split(/[\s,;]+/).map((v) => v.trim()).filter((v) => v.includes("@"));
+    const checked = form.getAll("users").map((v) => (opaque ? identifierFromCardToken(v) : v)).filter((v): v is string => !!v);
+    return {
+        everyone: form.get("everyone") === "1",
+        tags: form.getAll("tags").filter((t) => t !== ""),
+        users: [...new Set([...checked, ...extra])],
+    };
+}
+
+function accessText(access: Access, owner?: string | null): string {
+    const parts: string[] = [];
+    if (owner) parts.push(`<span class="tag">🏠 ${esc(nameOf(owner))}</span>`);
+    if (access.everyone) return parts.join("") + `<span class="tag">alle</span>`;
+    for (const t of access.tags ?? []) parts.push(`<span class="tag">${esc(roleStyle(t).label)}</span>`);
+    for (const u of access.users ?? []) parts.push(`<span class="tag">👤 ${esc(nameOf(u))}</span>`);
+    return parts.length ? parts.join("") : `<span class="tag">nur Admins</span>`;
 }
 
 // ---------- pages ----------
@@ -281,25 +324,73 @@ document.getElementById("replace").addEventListener("click",async()=>{const f=do
 </script>`);
 }
 
+async function roomsPage(s: Session, message?: string): Promise<string> {
+    let list: Awaited<ReturnType<typeof listRooms>> = [];
+    let error = "";
+    try {
+        list = await listRooms();
+    } catch (err) {
+        error = "Die Map-Storage ist gerade nicht erreichbar.";
+    }
+    const settings = new Map(rooms.all().map((r) => [r.path, r]));
+    const rows = list
+        .map((room) => {
+            const path = room.roomUrl.replace(/^\/~\//, "");
+            const st = settings.get(path);
+            const template = path === config.personalRoomTemplate;
+            const thumb = room.thumbnail ? `<img src="${esc(room.thumbnail)}" alt="" style="width:96px;height:56px;object-fit:cover;image-rendering:pixelated">` : "";
+            return `<tr><td>${thumb}</td><td><strong>${esc(st?.name || room.name)}</strong><br><small class="sub">${esc(path)}</small></td>
+<td>${template ? '<span class="tag">Vorlage für Zimmer</span>' : st?.hidden ? '<span class="tag">versteckt</span>' + accessText(st.access, st.owner) : st ? accessText(st.access, st.owner) : '<span class="tag">alle</span>'}</td>
+<td><a href="/rooms/edit?path=${encodeURIComponent(path)}">Bearbeiten</a></td></tr>`;
+        })
+        .join("");
+    return layout("Räume", s, "rooms", `${message ? `<div class="msg">${esc(message)}</div>` : ""}${error ? `<div class="msg err">${esc(error)}</div>` : ""}
+<h1>Räume</h1><p class="sub">Alle Maps aus der Map-Storage. Hier legst du fest, wer sie betreten darf und wie sie in der Raumliste heißen. Admins kommen überall rein.</p>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th></th><th>Raum</th><th>Wer darf rein?</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4">Keine Räume.</td></tr>'}</tbody></table></div>
+${personalRoomsEnabled() ? `<p class="sub">Eigene Zimmer: Jeder kann sich im Spiel unter Menü → Profil ein Zimmer erstellen (Vorlage: <code>${esc(config.personalRoomTemplate!)}</code>).</p>` : `<p class="sub">Eigene Zimmer sind aus (PERSONAL_ROOM_TEMPLATE und MAP_STORAGE_TOKEN setzen).</p>`}`);
+}
+
+function roomEditPage(s: Session, path: string, current: RoomSettings | undefined, mapName: string, message?: string): string {
+    const csrf = csrfFor(s);
+    const st: RoomSettings = current ?? { path, name: null, description: null, access: { everyone: true }, hidden: false, owner: null };
+    return layout(st.name || mapName, s, "rooms", `${message ? `<div class="msg">${esc(message)}</div>` : ""}
+<p><a href="/rooms">← Alle Räume</a></p><h1>${esc(st.name || mapName)}</h1><p class="sub">${esc(path)}${st.owner ? ` · Zimmer von ${esc(nameOf(st.owner))}` : ""}</p>
+<form method="post" action="/rooms/edit?path=${encodeURIComponent(path)}" class="card">
+<input type="hidden" name="csrf" value="${esc(csrf)}">
+<label for="name">Name in der Raumliste</label><input id="name" name="name" type="text" maxlength="60" value="${esc(st.name ?? "")}" placeholder="${esc(mapName)}">
+<label for="description">Beschreibung</label><input id="description" name="description" type="text" maxlength="200" value="${esc(st.description ?? "")}">
+<h2 style="font-size:16px;margin:20px 0 4px">Wer darf rein?</h2>
+${accessFields(st.access, { exclude: st.owner ?? undefined })}
+<div class="checks" style="margin-top:12px"><label><input type="checkbox" name="hidden" value="1"${st.hidden ? " checked" : ""}> In der Raumliste verstecken</label></div>
+<button type="submit">Speichern</button></form>
+${st.owner ? `<form method="post" action="/rooms/delete?path=${encodeURIComponent(path)}" class="card" onsubmit="return confirm('Zimmer wirklich löschen? Die Einrichtung geht verloren.')"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="danger" type="submit">Zimmer löschen</button></form>` : ""}`);
+}
+
 function layerUrl(url: string): string {
     if (/^https?:\/\//.test(url)) return url;
     return config.playUrl ? `${config.playUrl}/${encodeURI(url)}` : url;
 }
 
-function membersPage(s: Session): string {
+function membersPage(s: Session, message?: string): string {
     const rows = listUsers()
         .filter((u) => !u.identifier.match(/^[0-9a-f-]{36}$/))
         .map((u) => {
             const details = u.textures ? wokaDetails(u.identifier, u.tags, u.textures) : [];
             const avatar = `<div class="layers">${details.map((d) => `<div style="background-image:url('${esc(layerUrl(d))}')"></div>`).join("")}</div>`;
             const tags = u.tags.map((t) => `<span class="tag${t === config.adminTag ? " admin" : ""}">${esc(t)}</span>`).join("");
-            return `<tr><td>${avatar}</td><td>${esc(u.username ?? u.name ?? "–")}</td><td>${esc(u.email ?? u.identifier)}</td><td>${tags}</td><td>${esc(u.lastSeen.replace("T", " ").slice(0, 16))}</td></tr>`;
+            const ban = bans.get(u.identifier);
+            const action = ban
+                ? `<form method="post" action="/members/unban"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:0">Entsperren</button></form>`
+                : u.identifier === s.sub
+                  ? ""
+                  : `<form method="post" action="/members/ban" onsubmit="const r=prompt('Grund für die Sperre (optional):');if(r===null)return false;this.reason.value=r;return true;"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><input type="hidden" name="reason"><button class="danger" style="margin:0">Sperren</button></form>`;
+            return `<tr${ban ? ' style="opacity:.6"' : ""}><td>${avatar}</td><td>${esc(u.username ?? u.name ?? "–")}${ban ? `<br><small class="sub">gesperrt${ban.reason ? `: ${esc(ban.reason)}` : ""}</small>` : ""}</td><td>${esc(u.email ?? u.identifier)}</td><td>${tags}</td><td>${esc(u.lastSeen.replace("T", " ").slice(0, 16))}</td><td>${action}</td></tr>`;
         })
         .join("");
-    return layout("Mitglieder", s, "members", `<h1>Mitglieder</h1>
+    return layout("Mitglieder", s, "members", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Mitglieder</h1>
 <p class="sub">Alle, die seit dem Start des Admin-Servers eingeloggt waren. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor).</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th>Avatar</th><th>Name</th><th>E-Mail</th><th>Rollen</th><th>Zuletzt da</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="5">Noch niemand.</td></tr>'}</tbody></table></div>`);
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Avatar</th><th>Name</th><th>E-Mail</th><th>Rollen</th><th>Zuletzt da</th><th></th></tr></thead>
+<tbody>${rows || '<tr><td colspan="6">Noch niemand.</td></tr>'}</tbody></table></div>`);
 }
 
 function wokaDetails(identifier: string, tags: string[], ids: string[]): string[] {
@@ -378,26 +469,27 @@ function cardPage(identifier: string): string | undefined {
 </body></html>`;
 }
 
-/** "Profil" tab in the WorkAdventure menu (OPENID_PROFILE_SCREEN_PROVIDER): your own visit card. */
-async function profilePage(accessToken: string | null): Promise<string> {
+/** "Profil" tab in the WorkAdventure menu (OPENID_PROFILE_SCREEN_PROVIDER): own visit card and personal room. */
+async function profilePage(accessToken: string | null, message?: string): Promise<string> {
     const identity = await identityFromAccessToken(accessToken ?? undefined);
     const identifier = identity?.email;
     const user = identifier ? users.get(identifier) : undefined;
-    const body = !identity
-        ? `<p class="hint">Deine Anmeldung ist abgelaufen. Lade WorkAdventure neu, dann siehst du hier dein Profil.</p>`
-        : !user
-          ? `<p class="hint">Betritt einmal einen Raum, dann erscheint hier deine Visitenkarte.</p>`
-          : `<h2>Deine Visitenkarte</h2><p class="hint">So sehen dich die anderen, wenn sie auf dich klicken.</p>
+    let body: string;
+    if (!identity || !identifier) {
+        body = `<p class="hint">Deine Anmeldung ist abgelaufen. Lade WorkAdventure neu, dann siehst du hier dein Profil.</p>`;
+    } else if (!user) {
+        body = `<p class="hint">Betritt einmal einen Raum, dann erscheint hier deine Visitenkarte.</p>`;
+    } else {
+        const viewer = { identifier, tags: identity.tags };
+        const layers = user.textures ? wokaDetails(user.identifier, identity.tags, user.textures) : [];
+        body = `${message ? `<p class="msg">${esc(message)}</p>` : ""}<h2>Deine Visitenkarte</h2><p class="hint">So sehen dich die anderen, wenn sie auf dich klicken.</p>
 <div class="frame">${cardMarkup({ ...user, tags: identity.tags })}</div>
 <h2>Dein Avatar</h2><div class="dirs">${[0, 1, 2, 3]
-              .map(
-                  (dir) =>
-                      `<div class="walk d${dir}">${(user.textures ? wokaDetails(user.identifier, identity.tags, user.textures) : [])
-                          .map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`)
-                          .join("")}</div>`,
-              )
-              .join("")}</div>
-<p class="hint">Rollen vergibt ein Admin. Deinen Avatar änderst du im Menü unter „Woka bearbeiten“.</p>`;
+            .map((dir) => `<div class="walk d${dir}">${layers.map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`).join("")}</div>`)
+            .join("")}</div>
+<p class="hint">Rollen vergibt ein Admin. Deinen Avatar änderst du im Menü unter „Woka bearbeiten“.</p>
+${personalRoomSection(viewer, accessToken!)}`;
+    }
     return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
 body{padding:16px 20px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,255,255,.65);margin:0 0 10px}
@@ -407,7 +499,33 @@ body{padding:16px 20px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,
 .d1 div{animation-name:w1}.d2 div{animation-name:w2}.d3 div{animation-name:w3}
 @keyframes w{from{background-position:0 0}to{background-position:-288px 0}}@keyframes w1{from{background-position:0 -96px}to{background-position:-288px -96px}}
 @keyframes w2{from{background-position:0 -192px}to{background-position:-288px -192px}}@keyframes w3{from{background-position:0 -288px}to{background-position:-288px -288px}}
+.box{background:rgba(0,0,0,.25);border-radius:8px;padding:12px 14px;max-width:560px}
+.btn{display:inline-block;margin-top:10px;padding:7px 14px;background:${WA_BLUE};color:#fff;border:0;border-radius:6px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.secondary{background:rgba(255,255,255,.12)}
+label{display:block;margin:10px 0 4px;color:rgba(255,255,255,.7)}input[type=text],textarea{width:100%;box-sizing:border-box;padding:7px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.25);color:#fff;font:inherit}
+.checks{display:flex;flex-wrap:wrap;gap:4px 14px}.checks label{display:flex;gap:6px;align-items:center;margin:0;color:#fff}
+.msg{background:rgba(47,179,111,.2);border-left:3px solid #2fb36f;padding:8px 12px;border-radius:4px}.sub{color:rgba(255,255,255,.5)}
 </style></head><body>${body}</body></html>`;
+}
+
+function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string): string {
+    if (!personalRoomsEnabled()) return "";
+    const room = rooms.byOwner(viewer.identifier);
+    const token = `<input type="hidden" name="accessToken" value="${esc(accessToken)}">`;
+    if (!room) {
+        if (!mayCreatePersonalRoom(viewer)) return "";
+        return `<h2>Dein Zimmer</h2><div class="box"><p class="hint" style="margin:0">Du kannst dir ein eigenes Zimmer anlegen und es mit dem Karteneditor einrichten. Du bestimmst, wer rein darf.</p>
+<form method="post" action="/profile/room">${token}<button class="btn" type="submit">Zimmer erstellen</button></form></div>`;
+    }
+    const enter = config.playUrl ? `${config.playUrl}/~/${room.path.split("/").map(encodeURIComponent).join("/")}` : `/~/${room.path}`;
+    return `<h2>Dein Zimmer</h2><div class="box">
+<a class="btn" href="${esc(enter)}" target="_top">Zimmer betreten</a>
+<p class="hint" style="margin-top:10px">Im Zimmer kannst du mit dem Karteneditor Möbel und Bereiche setzen.</p>
+<form method="post" action="/profile/room/settings">${token}
+<label for="name">Name</label><input id="name" name="name" type="text" maxlength="60" value="${esc(room.name ?? "")}">
+<label>Wer darf rein? (Admins immer)</label>
+${accessFields(room.access, { everyoneLabel: "Alle", exclude: viewer.identifier, opaque: true })}
+<button class="btn" type="submit">Speichern</button></form></div>`;
 }
 
 // ---------- login ----------
@@ -506,14 +624,37 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
         return void res.end(page ?? "<!doctype html><p style='color:#a99cc9;font-family:sans-serif'>Keine Visitenkarte.</p>");
     }
 
-    if (p === "/profile" && req.method === "GET") {
-        res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-            "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; frame-ancestors ${config.playUrl ?? "*"}`,
-            "Referrer-Policy": "no-referrer",
-        });
-        return void res.end(await profilePage(url.searchParams.get("accessToken")));
+    if (p === "/profile" || p.startsWith("/profile/")) {
+        const sendProfile = async (accessToken: string | null, message?: string) => {
+            res.writeHead(200, {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors ${config.playUrl ?? "*"}`,
+                "Referrer-Policy": "no-referrer",
+            });
+            res.end(await profilePage(accessToken, message));
+        };
+        if (req.method === "GET" && p === "/profile") return sendProfile(url.searchParams.get("accessToken"));
+        if (req.method === "POST" && (p === "/profile/room" || p === "/profile/room/settings")) {
+            const form = await readForm(req);
+            const accessToken = form.get("accessToken");
+            const identity = await identityFromAccessToken(accessToken ?? undefined);
+            if (!identity?.email) return sendProfile(accessToken);
+            const viewer = { identifier: identity.email, tags: identity.tags };
+            if (p === "/profile/room") {
+                if (!mayCreatePersonalRoom(viewer)) throw new HttpError(403, "Keine Berechtigung");
+                const name = identity.username ?? identity.name ?? identity.email.split("@")[0]!;
+                const room = await createPersonalRoom(identity.email, name);
+                console.info(`personal room ${room.path} created for ${identity.email}`);
+                return sendProfile(accessToken, "Dein Zimmer ist fertig. Lege fest, wer rein darf, und richte es ein.");
+            }
+            const room = rooms.byOwner(identity.email);
+            if (!room) return sendProfile(accessToken);
+            const access = accessFromForm(form, true);
+            access.users = (access.users ?? []).filter((u) => u.toLowerCase() !== identity.email!.toLowerCase());
+            rooms.save({ ...room, name: (form.get("name") ?? "").trim().slice(0, 60) || room.name, access });
+            return sendProfile(accessToken, "Gespeichert.");
+        }
     }
 
     if (p === "/login") return startLogin(res);
@@ -538,6 +679,53 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
     if (req.method === "GET" && (p === "/" || p === "")) return redirect(res, "/wokas");
     if (req.method === "GET" && p === "/wokas") return html(res, 200, wokasPage(session));
     if (req.method === "GET" && p === "/members") return html(res, 200, membersPage(session));
+    if (req.method === "GET" && p === "/rooms") return html(res, 200, await roomsPage(session));
+    if (p === "/rooms/edit" || p === "/rooms/delete") {
+        const path = url.searchParams.get("path") ?? "";
+        const known = (await listRooms().catch(() => [])).find((r) => r.roomUrl === "/~/" + path);
+        const current = rooms.get(path);
+        if (!known && !current) return html(res, 404, layout("Nicht gefunden", session, "rooms", "<p>Diesen Raum gibt es nicht.</p>"));
+        const mapName = known?.name ?? path;
+        if (req.method === "GET" && p === "/rooms/edit") return html(res, 200, roomEditPage(session, path, current, mapName));
+        if (req.method === "POST") {
+            const form = await readForm(req);
+            checkCsrf(session, form.get("csrf"));
+            if (p === "/rooms/delete") {
+                if (!current?.owner) throw new HttpError(400, "Nur eigene Zimmer können gelöscht werden.");
+                if (config.mapStorageToken) {
+                    await fetch(`${config.internalMapStorageUrl}/${path.split("/").map(encodeURIComponent).join("/")}`, {
+                        method: "DELETE",
+                        headers: { Authorization: `Bearer ${config.mapStorageToken}` },
+                        signal: AbortSignal.timeout(10_000),
+                    }).catch((err) => console.warn("map-storage delete failed:", err));
+                }
+                rooms.remove(path);
+                return html(res, 200, await roomsPage(session, "Zimmer gelöscht."));
+            }
+            const updated: RoomSettings = {
+                path,
+                name: (form.get("name") ?? "").trim().slice(0, 60) || null,
+                description: (form.get("description") ?? "").trim().slice(0, 200) || null,
+                access: accessFromForm(form),
+                hidden: form.get("hidden") === "1",
+                owner: current?.owner ?? null,
+            };
+            rooms.save(updated);
+            return html(res, 200, roomEditPage(session, path, updated, mapName, "Gespeichert."));
+        }
+    }
+    if (req.method === "POST" && (p === "/members/ban" || p === "/members/unban")) {
+        const form = await readForm(req);
+        checkCsrf(session, form.get("csrf"));
+        const id = form.get("id") ?? "";
+        if (!id) throw new HttpError(400, "Kein Mitglied angegeben.");
+        if (p === "/members/ban") {
+            bans.add(id, (form.get("reason") ?? "").trim().slice(0, 500) || null, session.sub);
+            return html(res, 200, membersPage(session, `${nameOf(id)} ist gesperrt. Die Sperre greift beim nächsten Betreten eines Raums.`));
+        }
+        bans.remove(id);
+        return html(res, 200, membersPage(session, `${nameOf(id)} ist entsperrt.`));
+    }
     if (req.method === "GET" && p === "/reports") return html(res, 200, reportsPage(session));
 
     if (req.method === "POST" && p === "/wokas") {

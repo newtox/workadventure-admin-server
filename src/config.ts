@@ -67,6 +67,13 @@ export const config = {
     /** Maximum size of files uploaded in the chat (bytes). */
     uploadMaxFilesize: Number(str("UPLOAD_MAX_FILESIZE", String(10 * 1024 * 1024))),
 
+    /** Token for the map storage API (MAP_STORAGE_AUTHENTICATION_TOKEN), needed to create personal rooms. */
+    mapStorageToken: optional("MAP_STORAGE_TOKEN"),
+    /** Map that is copied for each personal room, e.g. "maps/zimmer.wam". Enables personal rooms. */
+    personalRoomTemplate: optional("PERSONAL_ROOM_TEMPLATE"),
+    /** Roles that may create a personal room (empty = everyone who is logged in). */
+    personalRoomTags: list("PERSONAL_ROOM_TAGS", ""),
+
     // ---------- Admin UI (optional) ----------
     /** Public URL of the admin UI, e.g. https://workadventure-admin.example.com. Enables the UI. */
     publicUrl: optional("PUBLIC_URL") ? trimSlash(optional("PUBLIC_URL")!) : undefined,

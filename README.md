@@ -10,6 +10,10 @@ WorkAdventure without an admin API keeps the chosen woka only in the browser and
 - **Admin UI** (login through OpenID Connect, admin role only): custom wokas with walking preview, members with their roles and woka, player reports.
 - **Map editor rights** come from roles (`EDITOR_TAGS`, default `admin,editor`) or a list of users.
 - **Room list** from the map storage, with relative thumbnails (e.g. the `mapImage` of the Tiled map) turned into working URLs.
+- **Room access by role or person**, names and descriptions for the room list, hidden rooms (admin UI → Räume).
+- **Personal rooms:** every player can create their own room from a template map (profile tab in WorkAdventure), decorate it with the map editor and decide who may enter.
+- **Bans** from the admin UI or WorkAdventure's own ban button.
+- **Visit cards** with role badges, and a **profile tab** (`OPENID_PROFILE_SCREEN_PROVIDER=<PUBLIC_URL>/profile`).
 - Member and tag search, player reports, and chat upload limits for the uploader.
 
 No runtime dependencies: Node.js 22 with the built-in `node:sqlite`.
@@ -52,6 +56,9 @@ All endpoints except capabilities, logout and the upload check require `Authoriz
 | `ENABLE_ISSUE_REPORT` | `false` | |
 | `ENABLE_TUTORIAL` | `true` | |
 | `UPLOAD_MAX_FILESIZE` | `10485760` | Chat upload limit in bytes |
+| `PERSONAL_ROOM_TEMPLATE` | – | Map copied for personal rooms, e.g. `maps/zimmer.wam`; enables personal rooms |
+| `MAP_STORAGE_TOKEN` | – | Map storage API token (`MAP_STORAGE_AUTHENTICATION_TOKEN`), needed to copy the template |
+| `PERSONAL_ROOM_TAGS` | – | Roles that may create a personal room (empty: everyone logged in) |
 | `DATA_DIR` | `/data` | SQLite database and uploaded wokas (writable by UID 1000) |
 
 ### Admin UI

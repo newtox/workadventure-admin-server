@@ -27,6 +27,23 @@ db.exec(`
         room       TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
+    -- Settings per map-storage room (path like "maps/office.wam").
+    -- access: {"everyone": true} | {"tags": ["vip"], "users": ["someone@example.com"]}
+    CREATE TABLE IF NOT EXISTS rooms (
+        path        TEXT PRIMARY KEY,
+        name        TEXT,
+        description TEXT,
+        access      TEXT NOT NULL DEFAULT '{"everyone":true}',
+        hidden      INTEGER NOT NULL DEFAULT 0,
+        owner       TEXT,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS bans (
+        identifier TEXT PRIMARY KEY COLLATE NOCASE,
+        reason     TEXT,
+        banned_by  TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+    );
     -- Custom wokas (managed through the admin UI in a later version).
     -- access: {"everyone": true} | {"tags": ["vip"], "users": ["someone@example.com"]}
     CREATE TABLE IF NOT EXISTS custom_wokas (
@@ -106,6 +123,19 @@ const statements = {
     insertWoka: db.prepare("INSERT INTO custom_wokas (id, part, name, url, access, position) VALUES (?, ?, ?, ?, ?, ?)"),
     updateWoka: db.prepare("UPDATE custom_wokas SET name = ?, part = ?, access = ?, url = ? WHERE id = ?"),
     deleteWoka: db.prepare("DELETE FROM custom_wokas WHERE id = ?"),
+    room: db.prepare("SELECT * FROM rooms WHERE path = ?"),
+    roomByOwner: db.prepare("SELECT * FROM rooms WHERE owner = ? COLLATE NOCASE"),
+    allRooms: db.prepare("SELECT * FROM rooms"),
+    upsertRoom: db.prepare(`
+        INSERT INTO rooms (path, name, description, access, hidden, owner) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET name = excluded.name, description = excluded.description,
+            access = excluded.access, hidden = excluded.hidden, owner = excluded.owner`),
+    deleteRoom: db.prepare("DELETE FROM rooms WHERE path = ?"),
+    ban: db.prepare(`INSERT INTO bans (identifier, reason, banned_by) VALUES (?, ?, ?)
+        ON CONFLICT(identifier) DO UPDATE SET reason = excluded.reason, banned_by = excluded.banned_by`),
+    unban: db.prepare("DELETE FROM bans WHERE identifier = ?"),
+    getBan: db.prepare("SELECT * FROM bans WHERE identifier = ?"),
+    allBans: db.prepare("SELECT * FROM bans ORDER BY created_at DESC"),
     allUsers: db.prepare("SELECT * FROM users ORDER BY last_seen DESC"),
     allReports: db.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 200"),
     deleteReport: db.prepare("DELETE FROM reports WHERE id = ?"),
@@ -216,3 +246,86 @@ export function listReports(): ReportRow[] {
         createdAt: String(r.created_at),
     }));
 }
+
+
+// ---------- rooms ----------
+
+export interface Access {
+    everyone?: boolean;
+    tags?: string[];
+    users?: string[];
+}
+
+export interface RoomSettings {
+    path: string;
+    name: string | null;
+    description: string | null;
+    access: Access;
+    hidden: boolean;
+    owner: string | null;
+}
+
+function toRoom(row: Record<string, unknown>): RoomSettings {
+    return {
+        path: String(row.path),
+        name: (row.name as string | null) ?? null,
+        description: (row.description as string | null) ?? null,
+        access: parseJson<Access>(row.access, { everyone: true }),
+        hidden: Number(row.hidden) === 1,
+        owner: (row.owner as string | null) ?? null,
+    };
+}
+
+export const rooms = {
+    get(path: string): RoomSettings | undefined {
+        const row = statements.room.get(path) as Record<string, unknown> | undefined;
+        return row ? toRoom(row) : undefined;
+    },
+    byOwner(identifier: string): RoomSettings | undefined {
+        const row = statements.roomByOwner.get(identifier) as Record<string, unknown> | undefined;
+        return row ? toRoom(row) : undefined;
+    },
+    all(): RoomSettings[] {
+        return (statements.allRooms.all() as Record<string, unknown>[]).map(toRoom);
+    },
+    save(r: RoomSettings) {
+        statements.upsertRoom.run(r.path, r.name, r.description, JSON.stringify(r.access), r.hidden ? 1 : 0, r.owner);
+    },
+    remove(path: string) {
+        statements.deleteRoom.run(path);
+    },
+};
+
+// ---------- bans ----------
+
+export interface Ban {
+    identifier: string;
+    reason: string | null;
+    bannedBy: string | null;
+    createdAt: string;
+}
+
+function toBan(row: Record<string, unknown>): Ban {
+    return {
+        identifier: String(row.identifier),
+        reason: (row.reason as string | null) ?? null,
+        bannedBy: (row.banned_by as string | null) ?? null,
+        createdAt: String(row.created_at),
+    };
+}
+
+export const bans = {
+    get(identifier: string): Ban | undefined {
+        const row = statements.getBan.get(identifier) as Record<string, unknown> | undefined;
+        return row ? toBan(row) : undefined;
+    },
+    all(): Ban[] {
+        return (statements.allBans.all() as Record<string, unknown>[]).map(toBan);
+    },
+    add(identifier: string, reason: string | null, by: string | null) {
+        statements.ban.run(identifier, reason, by);
+    },
+    remove(identifier: string) {
+        statements.unban.run(identifier);
+    },
+};
