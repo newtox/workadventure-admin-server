@@ -1,4 +1,4 @@
-# workadventure-admin-server
+# wa-admin-server
 
 A small self-hosted admin API for [WorkAdventure](https://github.com/workadventure/workadventure), for instances that log in through OpenID Connect (tested with Authentik).
 
