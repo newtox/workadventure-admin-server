@@ -27,13 +27,17 @@ export function visitCardUrl(identifier: string): string | null {
 }
 
 /** Display name and colour per role; unknown roles are shown with their name in grey. */
+// Colours follow WorkAdventure's theme: admin and editor use the same blue as the in-game admin badge.
+export const WA_BLUE = "#4156f6";
+export const WA_CONTRAST = "#1b2a41";
+
 export const ROLE_STYLES: Record<string, { label: string; color: string; order: number }> = {
-    admin: { label: "Admin", color: "#e0245e", order: 0 },
-    moderator: { label: "Moderator", color: "#f28c28", order: 1 },
-    editor: { label: "Editor", color: "#9b59ff", order: 2 },
+    admin: { label: "Admin", color: WA_BLUE, order: 0 },
+    moderator: { label: "Moderator", color: "#e8772e", order: 1 },
+    editor: { label: "Editor", color: WA_BLUE, order: 2 },
     vip: { label: "VIP", color: "#e6b800", order: 3 },
     freunde: { label: "Freunde", color: "#2fb36f", order: 4 },
-    member: { label: "Mitglied", color: "#3b82f6", order: 5 },
+    member: { label: "Mitglied", color: "#5b6b82", order: 5 },
 };
 
 export function roleStyle(tag: string) {

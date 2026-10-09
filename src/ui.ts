@@ -8,7 +8,8 @@ import { customWokas, listCustomWokas, listReports, listUsers, reports, users, t
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
-import { identifierFromCardToken, roleStyle } from "./cards.js";
+import { identifierFromCardToken, roleStyle, WA_CONTRAST } from "./cards.js";
+import { identityFromAccessToken } from "./identity.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -339,33 +340,74 @@ function messagePage(title: string, text: string, link?: [string, string]): stri
 
 // ---------- visit card (public, shown inside WorkAdventure) ----------
 
-function cardPage(identifier: string): string | undefined {
-    const user = users.get(identifier);
-    if (!user) return undefined;
-    const layers = user.textures ? wokaDetails(user.identifier, user.tags, user.textures) : [];
-    const roles = [...user.tags]
+function roleBadges(tags: string[]): string {
+    const roles = [...tags]
         .sort((a, b) => roleStyle(a).order - roleStyle(b).order)
         .map((t) => {
             const s = roleStyle(t);
             return `<span class="role" style="background:${s.color}">${esc(s.label)}</span>`;
         })
         .join("");
-    const since = user.firstSeen ? new Date(user.firstSeen).toLocaleDateString("de-DE", { month: "long", year: "numeric" }) : "";
-    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-html,body{margin:0;background:#1b1630;color:#f3eefc;font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+    return roles || '<span class="role" style="background:#6b6385">Gast</span>';
+}
+
+const CARD_CSS = `
+html,body{margin:0;background:${WA_CONTRAST};color:#fff;font:14px/1.4 "Roboto",ui-sans-serif,system-ui,sans-serif}
 .card{display:flex;gap:14px;align-items:center;padding:12px}
-.avatar{position:relative;width:64px;height:64px;flex:none;border-radius:12px;background:#2c2545}
+.avatar{position:relative;width:64px;height:64px;flex:none;border-radius:8px;background:rgba(255,255,255,.08)}
 .avatar div{position:absolute;inset:0;background-size:192px 256px;background-position:-64px 0;image-rendering:pixelated}
-h1{margin:0 0 6px;font-size:18px}.roles{display:flex;flex-wrap:wrap;gap:5px}
-.role{color:#fff;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px}
-small{display:block;margin-top:8px;color:#a99cc9}
-</style></head><body><div class="card" id="card">
+h1{margin:0 0 6px;font-size:17px;font-weight:700}.roles{display:flex;flex-wrap:wrap;gap:4px}
+.role{color:#fff;font-size:11px;font-weight:500;padding:1px 6px;border-radius:2px;line-height:1.6}
+small{display:block;margin-top:8px;color:rgba(255,255,255,.6)}`;
+
+function cardMarkup(user: NonNullable<ReturnType<typeof users.get>>): string {
+    const layers = user.textures ? wokaDetails(user.identifier, user.tags, user.textures) : [];
+    const since = user.firstSeen ? new Date(user.firstSeen).toLocaleDateString("de-DE", { month: "long", year: "numeric" }) : "";
+    return `<div class="card" id="card">
 <div class="avatar">${layers.map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`).join("")}</div>
-<div><h1>${esc(user.username ?? user.name ?? "Unbekannt")}</h1><div class="roles">${roles || '<span class="role" style="background:#6b6385">Gast</span>'}</div>
-${since ? `<small>Dabei seit ${esc(since)}</small>` : ""}</div></div>
+<div><h1>${esc(user.username ?? user.name ?? "Unbekannt")}</h1><div class="roles">${roleBadges(user.tags)}</div>
+${since ? `<small>Dabei seit ${esc(since)}</small>` : ""}</div></div>`;
+}
+
+function cardPage(identifier: string): string | undefined {
+    const user = users.get(identifier);
+    if (!user) return undefined;
+    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${CARD_CSS}</style></head><body>${cardMarkup(user)}
 <script>parent.postMessage({type:"cvIframeSize",data:{w:document.body.scrollWidth,h:document.getElementById("card").offsetHeight+4}},"*");</script>
 </body></html>`;
+}
+
+/** "Profil" tab in the WorkAdventure menu (OPENID_PROFILE_SCREEN_PROVIDER): your own visit card. */
+async function profilePage(accessToken: string | null): Promise<string> {
+    const identity = await identityFromAccessToken(accessToken ?? undefined);
+    const identifier = identity?.email;
+    const user = identifier ? users.get(identifier) : undefined;
+    const body = !identity
+        ? `<p class="hint">Deine Anmeldung ist abgelaufen. Lade WorkAdventure neu, dann siehst du hier dein Profil.</p>`
+        : !user
+          ? `<p class="hint">Betritt einmal einen Raum, dann erscheint hier deine Visitenkarte.</p>`
+          : `<h2>Deine Visitenkarte</h2><p class="hint">So sehen dich die anderen, wenn sie auf dich klicken.</p>
+<div class="frame">${cardMarkup({ ...user, tags: identity.tags })}</div>
+<h2>Dein Avatar</h2><div class="dirs">${[0, 1, 2, 3]
+              .map(
+                  (dir) =>
+                      `<div class="walk d${dir}">${(user.textures ? wokaDetails(user.identifier, identity.tags, user.textures) : [])
+                          .map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`)
+                          .join("")}</div>`,
+              )
+              .join("")}</div>
+<p class="hint">Rollen vergibt ein Admin. Deinen Avatar änderst du im Menü unter „Woka bearbeiten“.</p>`;
+    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${CARD_CSS}
+body{padding:16px 20px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,255,255,.65);margin:0 0 10px}
+.frame{display:inline-block;background:rgba(0,0,0,.25);border-radius:8px;max-width:340px}
+.dirs{display:flex;gap:10px;margin-bottom:10px}.walk{position:relative;width:96px;height:96px;border-radius:8px;background:rgba(255,255,255,.08)}
+.walk div{position:absolute;inset:0;background-size:288px 384px;image-rendering:pixelated;animation:w .6s steps(3) infinite}
+.d1 div{animation-name:w1}.d2 div{animation-name:w2}.d3 div{animation-name:w3}
+@keyframes w{from{background-position:0 0}to{background-position:-288px 0}}@keyframes w1{from{background-position:0 -96px}to{background-position:-288px -96px}}
+@keyframes w2{from{background-position:0 -192px}to{background-position:-288px -192px}}@keyframes w3{from{background-position:0 -288px}to{background-position:-288px -288px}}
+</style></head><body>${body}</body></html>`;
 }
 
 // ---------- login ----------
@@ -462,6 +504,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             "Referrer-Policy": "no-referrer",
         });
         return void res.end(page ?? "<!doctype html><p style='color:#a99cc9;font-family:sans-serif'>Keine Visitenkarte.</p>");
+    }
+
+    if (p === "/profile" && req.method === "GET") {
+        res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; frame-ancestors ${config.playUrl ?? "*"}`,
+            "Referrer-Policy": "no-referrer",
+        });
+        return void res.end(await profilePage(url.searchParams.get("accessToken")));
     }
 
     if (p === "/login") return startLogin(res);
