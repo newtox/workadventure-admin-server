@@ -48,6 +48,7 @@ export interface UserRow {
     tags: string[];
     textures: string[] | null;
     companion: string | null;
+    firstSeen: string | null;
     lastSeen: string;
 }
 
@@ -70,6 +71,7 @@ function toUser(row: Record<string, unknown> | undefined): UserRow | undefined {
         tags: parseJson<string[]>(row.tags, []),
         textures: parseJson<string[] | null>(row.textures, null),
         companion: (row.companion as string | null) ?? null,
+        firstSeen: (row.first_seen as string | null) ?? null,
         lastSeen: String(row.last_seen),
     };
 }

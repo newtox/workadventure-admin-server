@@ -8,6 +8,7 @@ import { customWokas, listCustomWokas, listReports, listUsers, reports, users, t
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
+import { identifierFromCardToken, roleStyle } from "./cards.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -336,6 +337,37 @@ function messagePage(title: string, text: string, link?: [string, string]): stri
     return layout(title, undefined, "", `<div class="card"><h1>${esc(title)}</h1><p>${esc(text)}</p>${link ? `<a class="button" href="${esc(link[0])}">${esc(link[1])}</a>` : ""}</div>`);
 }
 
+// ---------- visit card (public, shown inside WorkAdventure) ----------
+
+function cardPage(identifier: string): string | undefined {
+    const user = users.get(identifier);
+    if (!user) return undefined;
+    const layers = user.textures ? wokaDetails(user.identifier, user.tags, user.textures) : [];
+    const roles = [...user.tags]
+        .sort((a, b) => roleStyle(a).order - roleStyle(b).order)
+        .map((t) => {
+            const s = roleStyle(t);
+            return `<span class="role" style="background:${s.color}">${esc(s.label)}</span>`;
+        })
+        .join("");
+    const since = user.firstSeen ? new Date(user.firstSeen).toLocaleDateString("de-DE", { month: "long", year: "numeric" }) : "";
+    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;background:#1b1630;color:#f3eefc;font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.card{display:flex;gap:14px;align-items:center;padding:12px}
+.avatar{position:relative;width:64px;height:64px;flex:none;border-radius:12px;background:#2c2545}
+.avatar div{position:absolute;inset:0;background-size:192px 256px;background-position:-64px 0;image-rendering:pixelated}
+h1{margin:0 0 6px;font-size:18px}.roles{display:flex;flex-wrap:wrap;gap:5px}
+.role{color:#fff;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px}
+small{display:block;margin-top:8px;color:#a99cc9}
+</style></head><body><div class="card" id="card">
+<div class="avatar">${layers.map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`).join("")}</div>
+<div><h1>${esc(user.username ?? user.name ?? "Unbekannt")}</h1><div class="roles">${roles || '<span class="role" style="background:#6b6385">Gast</span>'}</div>
+${since ? `<small>Dabei seit ${esc(since)}</small>` : ""}</div></div>
+<script>parent.postMessage({type:"cvIframeSize",data:{w:document.body.scrollWidth,h:document.getElementById("card").offsetHeight+4}},"*");</script>
+</body></html>`;
+}
+
 // ---------- login ----------
 
 async function startLogin(res: ServerResponse): Promise<void> {
@@ -417,6 +449,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             "X-Content-Type-Options": "nosniff",
         });
         return void fs.createReadStream(filePath).pipe(res);
+    }
+
+    const card = /^\/card\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(p);
+    if (card && req.method === "GET") {
+        const identifier = identifierFromCardToken(card[1]!);
+        const page = identifier ? cardPage(identifier) : undefined;
+        res.writeHead(page ? 200 : 404, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors ${config.playUrl ?? "*"}`,
+            "Referrer-Policy": "no-referrer",
+        });
+        return void res.end(page ?? "<!doctype html><p style='color:#a99cc9;font-family:sans-serif'>Keine Visitenkarte.</p>");
     }
 
     if (p === "/login") return startLogin(res);

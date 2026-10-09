@@ -5,6 +5,7 @@ import { users, reports } from "./db.js";
 import { HttpError, queryList, queryString, readJson, sendEmpty, sendJson } from "./http.js";
 import { identityFromAccessToken } from "./identity.js";
 import { listRooms } from "./mapStorage.js";
+import { visitCardUrl } from "./cards.js";
 import { companionDetail, companions, wokaDetailsFor, wokaListFor, type Viewer } from "./wokas.js";
 
 const CAPABILITIES = {
@@ -159,7 +160,7 @@ async function roomAccess(query: URLSearchParams) {
         email: anonymous ? null : (identifier ?? null),
         userUuid: identifier ?? "",
         tags: viewer.tags,
-        visitCardUrl: null,
+        visitCardUrl: anonymous || !identifier ? null : visitCardUrl(identifier),
         isCharacterTexturesValid: characterTextures !== undefined,
         characterTextures: characterTextures ?? [],
         isCompanionTextureValid,
@@ -284,5 +285,5 @@ function knownTags(): string[] {
 }
 
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
-    return { id: u.identifier, name: u.username ?? u.name ?? null, email: u.email ?? u.identifier, visitCardUrl: null, chatID: null };
+    return { id: u.identifier, name: u.username ?? u.name ?? null, email: u.email ?? u.identifier, visitCardUrl: visitCardUrl(u.identifier), chatID: null };
 }
