@@ -15,6 +15,7 @@ WorkAdventure without an admin API keeps the chosen woka only in the browser and
 - **Bans** from the admin UI or WorkAdventure's own ban button.
 - **Visit cards** with role badges, and a **profile tab** (`OPENID_PROFILE_SCREEN_PROVIDER=<PUBLIC_URL>/profile`).
 - Member and tag search, player reports, and chat upload limits for the uploader.
+- **German and English** for everything players see (visit cards, profile tab, ban and access messages): the game language WorkAdventure sends wins, otherwise the browser language. The admin UI is German.
 
 No runtime dependencies: Node.js 22 with the built-in `node:sqlite`.
 

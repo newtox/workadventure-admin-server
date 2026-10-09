@@ -6,6 +6,7 @@ import { canEnter, isOwner, roomsVisibleFor, storagePath } from "./access.js";
 import { HttpError, queryList, queryString, readJson, sendEmpty, sendJson } from "./http.js";
 import { identityFromAccessToken } from "./identity.js";
 import { visitCardUrl } from "./cards.js";
+import { langFrom, matchLang, t } from "./i18n.js";
 import { companionDetail, companions, wokaDetailsFor, wokaListFor, type Viewer } from "./wokas.js";
 
 const CAPABILITIES = {
@@ -149,7 +150,8 @@ function mapDetails(playUri: URL) {
 
 // ---------- /api/room/access ----------
 
-async function roomAccess(query: URLSearchParams) {
+async function roomAccess(query: URLSearchParams, acceptLanguage: string | undefined) {
+    const text = t(langFrom(acceptLanguage));
     const identifier = queryString(query, "userIdentifier");
     const accessToken = queryString(query, "accessToken");
     const playUri = parseUrl(queryString(query, "playUri"), "playUri");
@@ -162,7 +164,7 @@ async function roomAccess(query: URLSearchParams) {
     if (identifier) {
         const ban = bans.get(identifier);
         if (ban) {
-            return error("BANNED", "Gesperrt", "Du wurdest von dieser Welt gesperrt.", ban.reason ? `Grund: ${ban.reason}` : "Wende dich an einen Admin, wenn du glaubst, dass das ein Fehler ist.");
+            return error("BANNED", text.bannedTitle, text.bannedSubtitle, ban.reason ? text.bannedReason(ban.reason) : text.bannedContact);
         }
     }
     const path = storagePath(playUri);
@@ -170,12 +172,17 @@ async function roomAccess(query: URLSearchParams) {
     if (!canEnter(settings, viewer)) {
         return error(
             "ROOM_ACCESS_DENIED",
-            "Kein Zutritt",
-            settings?.owner ? "Das ist ein privates Zimmer." : "Dieser Raum ist nur für bestimmte Rollen.",
-            "Geh zurück und frag den Besitzer oder einen Admin, ob du rein darfst.",
+            text.deniedTitle,
+            settings?.owner ? text.deniedPrivate : text.deniedRoles,
+            text.deniedHint,
         );
     }
     const stored = !anonymous && identifier ? users.get(identifier) : undefined;
+    // Remembered so the profile tab can use the game language instead of the browser's.
+    const gameLang = matchLang(acceptLanguage);
+    if (stored && gameLang) {
+        if (stored.locale !== gameLang) users.setLocale(stored.identifier, gameLang);
+    }
 
     // The account's saved woka wins; the browser's choice is used (and saved) when there is none yet.
     let characterTextures = stored?.textures ? wokaDetailsFor(viewer, stored.textures) : undefined;
@@ -244,7 +251,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             return sendJson(res, 200, mapDetails(parseUrl(queryString(q, "playUri"), "playUri")));
 
         case "GET /api/room/access":
-            return sendJson(res, 200, await roomAccess(q));
+            return sendJson(res, 200, await roomAccess(q, req.headers["accept-language"]));
 
         case "GET /api/woka/list": {
             const identifier = queryString(q, "uuid");

@@ -2,6 +2,7 @@
 // They are the only place where roles other than "admin" can be shown in the game.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
+import { roleLabel, type Lang } from "./i18n.js";
 
 const KEY = createHmac("sha256", config.apiToken).update("visit-card").digest();
 
@@ -40,6 +41,7 @@ export const ROLE_STYLES: Record<string, { label: string; color: string; order: 
     member: { label: "Mitglied", color: "#5b6b82", order: 5 },
 };
 
-export function roleStyle(tag: string) {
-    return ROLE_STYLES[tag] ?? { label: tag.charAt(0).toUpperCase() + tag.slice(1), color: "#6b6385", order: 99 };
+export function roleStyle(tag: string, lang: Lang = "de") {
+    const style = ROLE_STYLES[tag] ?? { label: tag.charAt(0).toUpperCase() + tag.slice(1), color: "#6b6385", order: 99 };
+    return { ...style, label: roleLabel(tag, lang) ?? style.label };
 }

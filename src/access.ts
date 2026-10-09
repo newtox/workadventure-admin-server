@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { rooms, type Access, type RoomSettings } from "./db.js";
 import { listRooms, type RoomDescription } from "./mapStorage.js";
 import type { Viewer } from "./wokas.js";
+import { t, type Lang } from "./i18n.js";
 
 export const isAdmin = (viewer: Viewer) => viewer.tags.includes(config.adminTag);
 
@@ -74,7 +75,7 @@ function slugify(name: string): string {
 }
 
 /** Copies the template map in the map storage and registers the owner. */
-export async function createPersonalRoom(owner: string, displayName: string): Promise<RoomSettings> {
+export async function createPersonalRoom(owner: string, displayName: string, lang: Lang): Promise<RoomSettings> {
     const existing = rooms.byOwner(owner);
     if (existing) return existing;
     const template = config.personalRoomTemplate!;
@@ -94,7 +95,7 @@ export async function createPersonalRoom(owner: string, displayName: string): Pr
         if (!res.ok) throw new Error(`map-storage copy failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
         const settings: RoomSettings = {
             path,
-            name: `Zimmer von ${displayName}`,
+            name: t(lang).roomName(displayName),
             description: null,
             access: { everyone: false, tags: [], users: [] },
             hidden: false,

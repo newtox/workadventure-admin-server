@@ -13,6 +13,7 @@ import { WOKA_PARTS, wokaListFor } from "./wokas.js";
 import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
 import { personalTag } from "./api.js";
+import { langFrom, t, type Lang } from "./i18n.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -199,10 +200,12 @@ function knownTags(): string[] {
 const realUsers = () => listUsers().filter((u) => !u.identifier.match(/^[0-9a-f-]{36}$/));
 
 // In the players' profile page other members' emails must not end up in the HTML, so ids are replaced by opaque tokens there.
-function accessFields(access: Access, options: { everyoneLabel?: string; exclude?: string; opaque?: boolean } = {}): string {
+function accessFields(access: Access, options: { everyoneLabel?: string; exclude?: string; opaque?: boolean; lang?: Lang } = {}): string {
+    const lang = options.lang ?? "de";
+    const text = t(lang);
     const idValue = (identifier: string) => (options.opaque ? cardToken(identifier) : identifier);
     const tagChecks = knownTags()
-        .map((t) => `<label><input type="checkbox" name="tags" value="${esc(t)}"${access.tags?.includes(t) ? " checked" : ""}> ${esc(roleStyle(t).label)}</label>`)
+        .map((t) => `<label><input type="checkbox" name="tags" value="${esc(t)}"${access.tags?.includes(t) ? " checked" : ""}> ${esc(roleStyle(t, lang).label)}</label>`)
         .join("");
     const allowed = new Set((access.users ?? []).map((u) => u.toLowerCase()));
     const known = realUsers().filter((u) => u.identifier.toLowerCase() !== options.exclude?.toLowerCase());
@@ -210,10 +213,10 @@ function accessFields(access: Access, options: { everyoneLabel?: string; exclude
         .map((u) => `<label><input type="checkbox" name="users" value="${esc(idValue(u.identifier))}"${allowed.has(u.identifier.toLowerCase()) ? " checked" : ""}> ${esc(u.username ?? u.name ?? u.identifier)}</label>`)
         .join("");
     const extra = (access.users ?? []).filter((u) => !known.some((k) => k.identifier.toLowerCase() === u.toLowerCase()) && u.toLowerCase() !== options.exclude?.toLowerCase());
-    return `<div class="checks"><label><input type="checkbox" name="everyone" value="1"${access.everyone ? " checked" : ""}> ${esc(options.everyoneLabel ?? "Alle")}</label></div>
-<label>Rollen</label><div class="checks">${tagChecks}</div>
-<label>Personen</label><div class="checks">${userChecks || '<span class="sub">Noch niemand war eingeloggt.</span>'}</div>
-<label for="more">Weitere Personen (E-Mail, eine pro Zeile)</label><textarea id="more" name="more" rows="2">${esc(extra.join("\n"))}</textarea>`;
+    return `<div class="checks"><label><input type="checkbox" name="everyone" value="1"${access.everyone ? " checked" : ""}> ${esc(options.everyoneLabel ?? text.everyone)}</label></div>
+<label>${text.roles}</label><div class="checks">${tagChecks}</div>
+<label>${text.people}</label><div class="checks">${userChecks || `<span class="sub">${text.nobodyYet}</span>`}</div>
+<label for="more">${text.morePeople}</label><textarea id="more" name="more" rows="2">${esc(extra.join("\n"))}</textarea>`;
 }
 
 function accessFromForm(form: URLSearchParams, opaque = false): Access {
@@ -433,15 +436,16 @@ function messagePage(title: string, text: string, link?: [string, string]): stri
 
 // ---------- visit card (public, shown inside WorkAdventure) ----------
 
-function roleBadges(tags: string[]): string {
+function roleBadges(tags: string[], lang: Lang): string {
     const roles = [...tags]
+        .filter((tag) => !tag.startsWith("@"))
         .sort((a, b) => roleStyle(a).order - roleStyle(b).order)
-        .map((t) => {
-            const s = roleStyle(t);
+        .map((tag) => {
+            const s = roleStyle(tag, lang);
             return `<span class="role" style="background:${s.color}">${esc(s.label)}</span>`;
         })
         .join("");
-    return roles || '<span class="role" style="background:#6b6385">Gast</span>';
+    return roles || `<span class="role" style="background:#6b6385">${t(lang).guest}</span>`;
 }
 
 const CARD_CSS = `
@@ -453,48 +457,54 @@ h1{margin:0 0 6px;font-size:17px;font-weight:700}.roles{display:flex;flex-wrap:w
 .role{color:#fff;font-size:11px;font-weight:500;padding:1px 6px;border-radius:2px;line-height:1.6}
 small{display:block;margin-top:8px;color:rgba(255,255,255,.6)}`;
 
-function cardMarkup(user: NonNullable<ReturnType<typeof users.get>>): string {
+function cardMarkup(user: NonNullable<ReturnType<typeof users.get>>, lang: Lang): string {
+    const text = t(lang);
     const layers = user.textures ? wokaDetails(user.identifier, user.tags, user.textures) : [];
-    const since = user.firstSeen ? new Date(user.firstSeen).toLocaleDateString("de-DE", { month: "long", year: "numeric" }) : "";
+    const since = user.firstSeen ? new Date(user.firstSeen).toLocaleDateString(text.locale, { month: "long", year: "numeric" }) : "";
     return `<div class="card" id="card">
 <div class="avatar">${layers.map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`).join("")}</div>
-<div><h1>${esc(user.username ?? user.name ?? "Unbekannt")}</h1><div class="roles">${roleBadges(user.tags)}</div>
-${since ? `<small>Dabei seit ${esc(since)}</small>` : ""}</div></div>`;
+<div><h1>${esc(user.username ?? user.name ?? text.unknown)}</h1><div class="roles">${roleBadges(user.tags, lang)}</div>
+${since ? `<small>${esc(text.memberSince(since))}</small>` : ""}</div></div>`;
 }
 
-function cardPage(identifier: string): string | undefined {
+function cardPage(identifier: string, lang: Lang): string | undefined {
     const user = users.get(identifier);
     if (!user) return undefined;
-    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${CARD_CSS}</style></head><body>${cardMarkup(user)}
+    return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${CARD_CSS}</style></head><body>${cardMarkup(user, lang)}
 <script>parent.postMessage({type:"cvIframeSize",data:{w:document.body.scrollWidth,h:document.getElementById("card").offsetHeight+4}},"*");</script>
 </body></html>`;
 }
 
 /** "Profil" tab in the WorkAdventure menu (OPENID_PROFILE_SCREEN_PROVIDER): own visit card and personal room. */
-async function profilePage(accessToken: string | null, message?: string): Promise<string> {
+async function profilePage(accessToken: string | null, browserLang: Lang, message?: (text: ReturnType<typeof t>) => string): Promise<string> {
     const identity = await identityFromAccessToken(accessToken ?? undefined);
     const identifier = identity?.email;
     const user = identifier ? users.get(identifier) : undefined;
+    // The game language of the last room visit wins over the browser language.
+    const lang: Lang = user?.locale === "de" || user?.locale === "en" ? user.locale : browserLang;
+    const text = t(lang);
     let body: string;
     if (!identity || !identifier) {
-        body = `<p class="hint">Deine Anmeldung ist abgelaufen. Lade WorkAdventure neu, dann siehst du hier dein Profil.</p>`;
+        body = `<p class="hint">${text.sessionExpired}</p>`;
     } else if (!user) {
-        body = `<p class="hint">Betritt einmal einen Raum, dann erscheint hier deine Visitenkarte.</p>`;
+        body = `<p class="hint">${text.enterRoomFirst}</p>`;
     } else {
         const viewer = { identifier, tags: identity.tags };
         const layers = user.textures ? wokaDetails(user.identifier, identity.tags, user.textures) : [];
-        body = `${message ? `<p class="msg">${esc(message)}</p>` : ""}<h2>Deine Visitenkarte</h2><p class="hint">So sehen dich die anderen, wenn sie auf dich klicken.</p>
-<div class="frame">${cardMarkup({ ...user, tags: identity.tags })}</div>
-<h2>Dein Avatar</h2><div class="dirs">${[0, 1, 2, 3]
+        const tag = personalTag(user.username ?? identity.username);
+        body = `${message ? `<p class="msg">${esc(message(text))}</p>` : ""}<h2>${text.yourCard}</h2><p class="hint">${text.yourCardHint}</p>
+<div class="frame">${cardMarkup({ ...user, tags: identity.tags }, lang)}</div>
+<h2>${text.yourAvatar}</h2><div class="dirs">${[0, 1, 2, 3]
             .map((dir) => `<div class="walk d${dir}">${layers.map((u) => `<div style="background-image:url('${esc(layerUrl(u))}')"></div>`).join("")}</div>`)
             .join("")}</div>
-<p class="hint">Rollen vergibt ein Admin. Deinen Avatar änderst du im Menü unter „Woka bearbeiten“.</p>
-${personalRoomSection(viewer, accessToken!)}`;
+<p class="hint">${text.avatarHint}</p>
+${tag ? `<h2>${text.yourTag}</h2><p class="hint"><code>${esc(tag)}</code> – ${text.yourTagHint}</p>` : ""}
+${personalRoomSection(viewer, accessToken!, lang)}`;
     }
-    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
-body{padding:16px 20px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,255,255,.65);margin:0 0 10px}
+body{padding:16px 20px}code{background:rgba(255,255,255,.12);padding:1px 6px;border-radius:4px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,255,255,.65);margin:0 0 10px}
 .frame{display:inline-block;background:rgba(0,0,0,.25);border-radius:8px;max-width:340px}
 .dirs{display:flex;gap:10px;margin-bottom:10px}.walk{position:relative;width:96px;height:96px;border-radius:8px;background:rgba(255,255,255,.08)}
 .walk div{position:absolute;inset:0;background-size:288px 384px;image-rendering:pixelated;animation:w .6s steps(3) infinite}
@@ -510,24 +520,25 @@ label{display:block;margin:10px 0 4px;color:rgba(255,255,255,.7)}input[type=text
 </style></head><body>${body}</body></html>`;
 }
 
-function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string): string {
+function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string, lang: Lang): string {
     if (!personalRoomsEnabled()) return "";
+    const text = t(lang);
     const room = rooms.byOwner(viewer.identifier);
     const token = `<input type="hidden" name="accessToken" value="${esc(accessToken)}">`;
     if (!room) {
         if (!mayCreatePersonalRoom(viewer)) return "";
-        return `<h2>Dein Zimmer</h2><div class="box"><p class="hint" style="margin:0">Du kannst dir ein eigenes Zimmer anlegen und es mit dem Karteneditor einrichten. Du bestimmst, wer rein darf.</p>
-<form method="post" action="/profile/room">${token}<button class="btn" type="submit">Zimmer erstellen</button></form></div>`;
+        return `<h2>${text.yourRoom}</h2><div class="box"><p class="hint" style="margin:0">${text.roomIntro}</p>
+<form method="post" action="/profile/room">${token}<button class="btn" type="submit">${text.createRoom}</button></form></div>`;
     }
     const enter = config.playUrl ? `${config.playUrl}/~/${room.path.split("/").map(encodeURIComponent).join("/")}` : `/~/${room.path}`;
-    return `<h2>Dein Zimmer</h2><div class="box">
-<a class="btn" href="${esc(enter)}" target="_top">Zimmer betreten</a>
-<p class="hint" style="margin-top:10px">Im Zimmer kannst du mit dem Karteneditor Möbel und Bereiche setzen.</p>
+    return `<h2>${text.yourRoom}</h2><div class="box">
+<a class="btn" href="${esc(enter)}" target="_top">${text.enterRoom}</a>
+<p class="hint" style="margin-top:10px">${text.roomEditHint}</p>
 <form method="post" action="/profile/room/settings">${token}
-<label for="name">Name</label><input id="name" name="name" type="text" maxlength="60" value="${esc(room.name ?? "")}">
-<label>Wer darf rein? (Admins immer)</label>
-${accessFields(room.access, { everyoneLabel: "Alle", exclude: viewer.identifier, opaque: true })}
-<button class="btn" type="submit">Speichern</button></form></div>`;
+<label for="name">${text.name}</label><input id="name" name="name" type="text" maxlength="60" value="${esc(room.name ?? "")}">
+<label>${text.whoMayEnter}</label>
+${accessFields(room.access, { exclude: viewer.identifier, opaque: true, lang })}
+<button class="btn" type="submit">${text.save}</button></form></div>`;
 }
 
 // ---------- login ----------
@@ -616,25 +627,27 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
     const card = /^\/card\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(p);
     if (card && req.method === "GET") {
         const identifier = identifierFromCardToken(card[1]!);
-        const page = identifier ? cardPage(identifier) : undefined;
+        const lang = langFrom(url.searchParams.get("lang"), req.headers["accept-language"]);
+        const page = identifier ? cardPage(identifier, lang) : undefined;
         res.writeHead(page ? 200 : 404, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
             "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors ${config.playUrl ?? "*"}`,
             "Referrer-Policy": "no-referrer",
         });
-        return void res.end(page ?? "<!doctype html><p style='color:#a99cc9;font-family:sans-serif'>Keine Visitenkarte.</p>");
+        return void res.end(page ?? `<!doctype html><p style='color:#a99cc9;font-family:sans-serif'>${t(lang).noCard}</p>`);
     }
 
     if (p === "/profile" || p.startsWith("/profile/")) {
-        const sendProfile = async (accessToken: string | null, message?: string) => {
+        const browserLang = langFrom(url.searchParams.get("lang"), req.headers["accept-language"]);
+        const sendProfile = async (accessToken: string | null, message?: (text: ReturnType<typeof t>) => string) => {
             res.writeHead(200, {
                 "Content-Type": "text/html; charset=utf-8",
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors ${config.playUrl ?? "*"}`,
                 "Referrer-Policy": "no-referrer",
             });
-            res.end(await profilePage(accessToken, message));
+            res.end(await profilePage(accessToken, browserLang, message));
         };
         if (req.method === "GET" && p === "/profile") return sendProfile(url.searchParams.get("accessToken"));
         if (req.method === "POST" && (p === "/profile/room" || p === "/profile/room/settings")) {
@@ -644,18 +657,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             if (!identity?.email) return sendProfile(accessToken);
             const viewer = { identifier: identity.email, tags: identity.tags };
             if (p === "/profile/room") {
-                if (!mayCreatePersonalRoom(viewer)) throw new HttpError(403, "Keine Berechtigung");
+                const stored = users.get(identity.email)?.locale;
+                const lang: Lang = stored === "de" || stored === "en" ? stored : browserLang;
+                if (!mayCreatePersonalRoom(viewer)) throw new HttpError(403, t(lang).forbidden);
                 const name = identity.username ?? identity.name ?? identity.email.split("@")[0]!;
-                const room = await createPersonalRoom(identity.email, name);
+                const room = await createPersonalRoom(identity.email, name, lang);
                 console.info(`personal room ${room.path} created for ${identity.email}`);
-                return sendProfile(accessToken, "Dein Zimmer ist fertig. Lege fest, wer rein darf, und richte es ein.");
+                return sendProfile(accessToken, (text) => text.roomCreated);
             }
             const room = rooms.byOwner(identity.email);
             if (!room) return sendProfile(accessToken);
             const access = accessFromForm(form, true);
             access.users = (access.users ?? []).filter((u) => u.toLowerCase() !== identity.email!.toLowerCase());
             rooms.save({ ...room, name: (form.get("name") ?? "").trim().slice(0, 60) || room.name, access });
-            return sendProfile(accessToken, "Gespeichert.");
+            return sendProfile(accessToken, (text) => text.saved);
         }
     }
 

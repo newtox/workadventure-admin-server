@@ -56,6 +56,14 @@ db.exec(`
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
 `);
+// Columns added after the first release.
+for (const column of ["locale TEXT"]) {
+    try {
+        db.exec(`ALTER TABLE users ADD COLUMN ${column}`);
+    } catch {
+        // already there
+    }
+}
 
 export interface UserRow {
     identifier: string;
@@ -67,6 +75,8 @@ export interface UserRow {
     companion: string | null;
     firstSeen: string | null;
     lastSeen: string;
+    /** Game language of the user's last visit ("de" or "en"). */
+    locale: string | null;
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -90,6 +100,7 @@ function toUser(row: Record<string, unknown> | undefined): UserRow | undefined {
         companion: (row.companion as string | null) ?? null,
         firstSeen: (row.first_seen as string | null) ?? null,
         lastSeen: String(row.last_seen),
+        locale: (row.locale as string | null) ?? null,
     };
 }
 
@@ -112,6 +123,7 @@ const statements = {
     setCompanion: db.prepare(`
         INSERT INTO users (identifier, companion) VALUES (?, ?)
         ON CONFLICT(identifier) DO UPDATE SET companion = excluded.companion`),
+    setLocale: db.prepare("UPDATE users SET locale = ? WHERE identifier = ?"),
     search: db.prepare(`
         SELECT * FROM users
         WHERE ? = '' OR username LIKE ? OR name LIKE ? OR email LIKE ? OR identifier LIKE ?
@@ -157,6 +169,9 @@ export const users = {
     },
     setCompanion(identifier: string, companion: string | null) {
         statements.setCompanion.run(identifier, companion);
+    },
+    setLocale(identifier: string, locale: string) {
+        statements.setLocale.run(locale, identifier);
     },
     search(text: string, limit = 50): UserRow[] {
         const like = `%${text}%`;

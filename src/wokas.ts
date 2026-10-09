@@ -36,7 +36,8 @@ export interface Viewer {
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 const official: WokaList = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "woka.json"), "utf8"));
 
-export const CUSTOM_COLLECTION = "Eigene";
+// Official wokas sit in the collection "default"; custom ones get their own, shown first.
+export const CUSTOM_COLLECTION = "custom";
 
 export function canUse(woka: CustomWoka, viewer: Viewer): boolean {
     const access = woka.access;
