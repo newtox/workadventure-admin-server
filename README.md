@@ -130,3 +130,7 @@ ADMIN_API_TOKEN=dev PUBLIC_MAP_STORAGE_URL=http://localhost/map-storage npm run 
 ```
 
 `data/woka.json` and `data/companions.json` are the default woka and companion lists of WorkAdventure (AGPL-3.0, artwork CC-BY-SA), so official wokas keep working unchanged.
+
+## License
+
+This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) license. By contributing, you agree that your contributions are licensed under the same terms.
