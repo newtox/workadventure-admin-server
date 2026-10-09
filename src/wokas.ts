@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { listCustomWokas, type CustomWoka } from "./db.js";
+import { config } from "./config.js";
 
 // Same order WorkAdventure uses to stack the layers of a woka.
 export const WOKA_PARTS = ["woka", "body", "eyes", "hair", "clothes", "hat", "accessory"] as const;
@@ -50,6 +51,33 @@ const PIPOYA_NAMES: Record<string, Record<"de" | "en", string>> = {
 };
 const pipoyaId = (file: string) => "pipoya-" + file.replace(/\.png$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+// Recoloured parts for the woka builder (more hair and eye colours, glasses), made from
+// WorkAdventure's own customisation sprites and served by the admin UI under /files/parts/.
+interface PartCollection {
+    key: string;
+    names: Record<"de" | "en", string>;
+    files: string[];
+    bundled?: string[];
+}
+const PARTS: Record<string, PartCollection[]> = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "parts", "parts.json"), "utf8"));
+export const PARTS_DIR = path.join(DATA_DIR, "parts");
+const BUNDLED_DIR: Record<string, string> = { eyes: "character_eyes", hair: "character_hairs" };
+
+function addParts(list: WokaList, lang: "de" | "en"): void {
+    if (!config.publicUrl) return;
+    for (const [part, cols] of Object.entries(PARTS)) {
+        const target = (list[part] ??= { collections: [] });
+        let position = 1;
+        for (const col of cols) {
+            const textures = [
+                ...col.files.map((file) => ({ id: "part-" + file.replace(/\.png$/, ""), name: file.replace(/\.png$/, ""), url: `${config.publicUrl}/files/parts/${file}` })),
+                ...(col.bundled ?? []).map((file) => ({ id: "part-wa-" + file.replace(/\.png$/, ""), name: file.replace(/\.png$/, ""), url: `resources/customisation/${BUNDLED_DIR[part]}/${file}` })),
+            ].map((tex, i) => ({ ...tex, position: i }));
+            target.collections.push({ name: col.names[lang], position: position++, textures });
+        }
+    }
+}
+
 function addPipoya(list: WokaList, lang: "de" | "en"): void {
     const part = (list.woka ??= { collections: [] });
     let position = 1;
@@ -73,6 +101,7 @@ export function canUse(woka: CustomWoka, viewer: Viewer): boolean {
 export function wokaListFor(viewer: Viewer, lang: "de" | "en" = "en"): WokaList {
     const list: WokaList = structuredClone(official);
     addPipoya(list, lang);
+    addParts(list, lang);
     const custom = listCustomWokas().filter((w) => canUse(w, viewer));
     for (const woka of custom) {
         const part = (list[woka.part] ??= { collections: [] });

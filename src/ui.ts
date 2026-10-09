@@ -10,7 +10,7 @@ import { changeRoomStyle, createPersonalRoom, mayCreatePersonalRoom, personalRoo
 import { deleteMap, listRooms } from "./mapStorage.js";
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
-import { WOKA_PARTS, wokaListFor } from "./wokas.js";
+import { PARTS_DIR, WOKA_PARTS, wokaListFor } from "./wokas.js";
 import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
 import { personalTag } from "./api.js";
@@ -961,6 +961,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             "Cache-Control": url.searchParams.has("v") ? "public, max-age=31536000, immutable" : "public, max-age=300",
             "X-Content-Type-Options": "nosniff",
         });
+        return void fs.createReadStream(filePath).pipe(res);
+    }
+
+    // Extra woka parts (hair and eye colours), loaded by WorkAdventure from other origins.
+    const partFile = /^\/files\/parts\/([a-z0-9-]+\.png)$/.exec(p);
+    if (partFile && req.method === "GET") {
+        const filePath = path.join(PARTS_DIR, partFile[1]!);
+        if (!fs.existsSync(filePath)) return sendJson(res, 404, { error: "not found" });
+        res.writeHead(200, { "Content-Type": "image/png", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=604800", "X-Content-Type-Options": "nosniff" });
         return void fs.createReadStream(filePath).pipe(res);
     }
 

@@ -14,6 +14,7 @@ WorkAdventure without an admin API keeps the chosen woka only in the browser and
 - **Personal rooms:** every player can create their own room from a template map (profile tab in WorkAdventure), decorate it with the map editor and decide who may enter.
 - **Bans** from the admin UI or WorkAdventure's own ban button.
 - **Visit cards** with role badges, and a **profile tab** (`OPENID_PROFILE_SCREEN_PROVIDER=<PUBLIC_URL>/profile`).
+- **More colours in the woka builder:** 8 extra hair colours for every hairstyle, 6 eye colours, glasses, clothes and hats in 6 extra colours, recoloured from WorkAdventure's own sprites (`tools/gen-parts.py`, served under `/files/parts/`; needs `PUBLIC_URL`).
 - **More official wokas:** the ~270 Pipoya characters that WorkAdventure ships but does not offer by default, as extra collections (men, women, school, animals).
 - **Invites:** registration links created through the authentik API, from the admin UI or (admins only) in the game.
 - Member and tag search, player reports, and chat upload limits for the uploader.
