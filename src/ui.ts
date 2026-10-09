@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
-import { customWokas, listCustomWokas, listReports, listUsers, users, type CustomWoka } from "./db.js";
+import { customWokas, listCustomWokas, listReports, listUsers, reports, users, type CustomWoka } from "./db.js";
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
@@ -309,16 +309,27 @@ function wokaDetails(identifier: string, tags: string[], ids: string[]): string[
     return urls;
 }
 
-function reportsPage(s: Session): string {
-    const rows = listReports()
+// WorkAdventure prefixes the comment with "-- Date: … -- -- Reporter: … -- -- Reported: … --".
+function reportText(comment: string): string {
+    return comment.replace(/^\s*--\s*Date:.*?--\s*--\s*Reporter:.*?--\s*--\s*Reported:.*?--\s*/s, "").trim() || comment;
+}
+
+function reportsPage(s: Session, message?: string): string {
+    const csrf = csrfFor(s);
+    const list = listReports();
+    const rows = list
         .map(
             (r) =>
-                `<tr><td>${esc(r.createdAt.replace("T", " ").slice(0, 16))}</td><td>${esc(nameOf(r.reporter))}</td><td>${esc(nameOf(r.reported))}</td><td>${esc(r.comment)}</td></tr>`,
+                `<tr><td>${esc(r.createdAt.replace("T", " ").slice(0, 16))}</td><td>${esc(nameOf(r.reporter))}</td><td>${esc(nameOf(r.reported))}</td><td>${esc(reportText(r.comment))}</td>
+<td><form method="post" action="/reports/${r.id}/delete"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="secondary" style="margin:0" title="Meldung löschen">✕</button></form></td></tr>`,
         )
         .join("");
-    return layout("Meldungen", s, "reports", `<h1>Meldungen</h1><p class="sub">Spieler-Meldungen aus WorkAdventure.</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th>Wann</th><th>Von</th><th>Über</th><th>Kommentar</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="4">Keine Meldungen.</td></tr>'}</tbody></table></div>`);
+    const clearAll = list.length > 1
+        ? `<form method="post" action="/reports/delete" onsubmit="return confirm('Alle Meldungen löschen?')"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="danger" type="submit">Alle löschen</button></form>`
+        : "";
+    return layout("Meldungen", s, "reports", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Meldungen</h1><p class="sub">Spieler-Meldungen aus WorkAdventure.</p>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Wann</th><th>Von</th><th>Über</th><th>Kommentar</th><th></th></tr></thead>
+<tbody>${rows || '<tr><td colspan="5">Keine Meldungen.</td></tr>'}</tbody></table>${clearAll}</div>`);
 }
 
 function messagePage(title: string, text: string, link?: [string, string]): string {
@@ -445,6 +456,18 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
         customWokas.add({ id, part, name, url: storeImage(id, data), access: { users: [session.sub] }, position: 0 });
         console.info(`woka ${id} uploaded by ${session.sub}`);
         return sendJson(res, 201, { id });
+    }
+
+    if (req.method === "POST" && p === "/reports/delete") {
+        checkCsrf(session, (await readForm(req)).get("csrf"));
+        reports.removeAll();
+        return html(res, 200, reportsPage(session, "Alle Meldungen gelöscht."));
+    }
+    const report = /^\/reports\/(\d+)\/delete$/.exec(p);
+    if (req.method === "POST" && report) {
+        checkCsrf(session, (await readForm(req)).get("csrf"));
+        reports.remove(Number(report[1]));
+        return html(res, 200, reportsPage(session, "Meldung gelöscht."));
     }
 
     const woka = /^\/wokas\/([^/]+)(\/image|\/delete)?$/.exec(p);

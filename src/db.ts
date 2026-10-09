@@ -106,6 +106,8 @@ const statements = {
     deleteWoka: db.prepare("DELETE FROM custom_wokas WHERE id = ?"),
     allUsers: db.prepare("SELECT * FROM users ORDER BY last_seen DESC"),
     allReports: db.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 200"),
+    deleteReport: db.prepare("DELETE FROM reports WHERE id = ?"),
+    deleteAllReports: db.prepare("DELETE FROM reports"),
 };
 
 export const users = {
@@ -140,6 +142,12 @@ export const users = {
 export const reports = {
     add(reported: string, reporter: string, comment: string, room: string | null) {
         statements.insertReport.run(reported, reporter, comment, room);
+    },
+    remove(id: number) {
+        statements.deleteReport.run(id);
+    },
+    removeAll() {
+        statements.deleteAllReports.run();
     },
 };
 
