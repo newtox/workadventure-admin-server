@@ -179,7 +179,7 @@ function layout(title: string, session: Session | undefined, active: string, bod
         : "";
     return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} – WorkAdventure Admin</title><style>${CSS}</style></head>
-<body><header><strong>WA Admin</strong>${nav}</header><main>${body}</main></body></html>`;
+<body><header><strong>WorkAdventure Admin</strong>${nav}</header><main>${body}</main></body></html>`;
 }
 
 function accessSummary(w: CustomWoka): string {
@@ -399,7 +399,7 @@ function membersPage(s: Session, message?: string): string {
         })
         .join("");
     return layout("Mitglieder", s, "members", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Mitglieder</h1>
-<p class="sub">Alle, die seit dem Start des Admin-Servers eingeloggt waren. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor). Wer in Authentik gelöscht wird, bleibt hier stehen, bis du ihn entfernst.</p>
+<p class="sub">Jeder, der WorkAdventure schon einmal eingeloggt betreten hat. Neue Leute erscheinen hier, sobald sie das erste Mal einen Raum betreten. Wer sich nur registriert hat, steht noch nicht hier. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor). Wer in Authentik gelöscht wird, bleibt hier stehen, bis du ihn entfernst.</p>
 <div class="card" style="overflow-x:auto"><table><thead><tr><th>Avatar</th><th>Name</th><th>E-Mail</th><th>Rollen</th><th>Zuletzt da</th><th></th></tr></thead>
 <tbody>${rows || '<tr><td colspan="6">Noch niemand.</td></tr>'}</tbody></table></div>`);
 }

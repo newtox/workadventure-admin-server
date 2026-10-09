@@ -346,10 +346,13 @@ function knownTags(): string[] {
     return [...new Set([...config.knownTags, ...users.allTags()])].sort().concat([...new Set(personal)].sort());
 }
 
-/** Matrix id WorkAdventure gives a logged-in user: "@" + email with "@" replaced by "_" + ":" + MATRIX_DOMAIN. */
+/**
+ * Matrix id of a logged-in user: "@" + email with "@" replaced by "_" + ":" + MATRIX_DOMAIN,
+ * in lower case like Synapse creates it (Matrix ids cannot contain capital letters).
+ */
 export function matrixId(identifier: string): string | null {
     if (!config.matrixDomain || !identifier || /^[0-9a-f-]{36}$/.test(identifier)) return null;
-    return `@${identifier.replace("@", "_")}:${config.matrixDomain}`;
+    return `@${identifier.toLowerCase().replace("@", "_")}:${config.matrixDomain}`;
 }
 
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
