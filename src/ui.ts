@@ -38,6 +38,8 @@ const PART_LABELS: Record<string, string> = {
 
 const esc = (s: unknown) =>
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+/** For text inside a single-quoted JavaScript string in an HTML attribute (escape with esc() afterwards). */
+const jsString = (s: string) => s.replace(/[\\'"]/g, "\\$&").replace(/[\r\n<>]/g, " ");
 
 const b64 = (data: Buffer | string) => Buffer.from(data).toString("base64url");
 
@@ -384,16 +386,20 @@ function membersPage(s: Session, message?: string): string {
             const own = personalTag(u.username);
             const tags = u.tags.map((t) => `<span class="tag${t === config.adminTag ? " admin" : ""}">${esc(t)}</span>`).join("") + (own ? `<br><small class="sub" title="Persönlicher Tag für Bereichsrechte im Karteneditor">${esc(own)}</small>` : "");
             const ban = bans.get(u.identifier);
+            const remove =
+                u.identifier === s.sub
+                    ? ""
+                    : `<form method="post" action="/members/delete" onsubmit="return confirm('${esc(jsString(u.username ?? u.identifier))} aus der Liste entfernen? Ein eigenes Zimmer wird mitgelöscht. Den Account in Authentik löschst du dort.');"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:6px 0 0">Entfernen</button></form>`;
             const action = ban
                 ? `<form method="post" action="/members/unban"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:0">Entsperren</button></form>`
                 : u.identifier === s.sub
                   ? ""
                   : `<form method="post" action="/members/ban" onsubmit="const r=prompt('Grund für die Sperre (optional):');if(r===null)return false;this.reason.value=r;return true;"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><input type="hidden" name="reason"><button class="danger" style="margin:0">Sperren</button></form>`;
-            return `<tr${ban ? ' style="opacity:.6"' : ""}><td>${avatar}</td><td>${esc(u.username ?? u.name ?? "–")}${ban ? `<br><small class="sub">gesperrt${ban.reason ? `: ${esc(ban.reason)}` : ""}</small>` : ""}</td><td>${esc(u.email ?? u.identifier)}</td><td>${tags}</td><td>${esc(u.lastSeen.replace("T", " ").slice(0, 16))}</td><td>${action}</td></tr>`;
+            return `<tr${ban ? ' style="opacity:.6"' : ""}><td>${avatar}</td><td>${esc(u.username ?? u.name ?? "–")}${ban ? `<br><small class="sub">gesperrt${ban.reason ? `: ${esc(ban.reason)}` : ""}</small>` : ""}</td><td>${esc(u.email ?? u.identifier)}</td><td>${tags}</td><td>${esc(u.lastSeen.replace("T", " ").slice(0, 16))}</td><td>${action}${remove}</td></tr>`;
         })
         .join("");
     return layout("Mitglieder", s, "members", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Mitglieder</h1>
-<p class="sub">Alle, die seit dem Start des Admin-Servers eingeloggt waren. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor).</p>
+<p class="sub">Alle, die seit dem Start des Admin-Servers eingeloggt waren. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor). Wer in Authentik gelöscht wird, bleibt hier stehen, bis du ihn entfernst.</p>
 <div class="card" style="overflow-x:auto"><table><thead><tr><th>Avatar</th><th>Name</th><th>E-Mail</th><th>Rollen</th><th>Zuletzt da</th><th></th></tr></thead>
 <tbody>${rows || '<tr><td colspan="6">Noch niemand.</td></tr>'}</tbody></table></div>`);
 }
@@ -777,6 +783,21 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
             rooms.save(updated);
             return html(res, 200, roomEditPage(session, path, updated, mapName, "Gespeichert."));
         }
+    }
+    if (req.method === "POST" && p === "/members/delete") {
+        const form = await readForm(req);
+        checkCsrf(session, form.get("csrf"));
+        const id = form.get("id") ?? "";
+        if (!id || id.toLowerCase() === session.sub.toLowerCase()) throw new HttpError(400, "Dieses Mitglied kann nicht entfernt werden.");
+        const name = nameOf(id);
+        const room = rooms.byOwner(id);
+        if (room) {
+            if (config.mapStorageToken) await deleteMap(room.path).catch((err) => console.warn("map-storage delete failed:", err));
+            rooms.remove(room.path);
+        }
+        users.remove(id);
+        console.info(`member ${id} removed by ${session.sub}`);
+        return html(res, 200, membersPage(session, `${name} wurde entfernt${room ? " (samt Zimmer)" : ""}.`));
     }
     if (req.method === "POST" && (p === "/members/ban" || p === "/members/unban")) {
         const form = await readForm(req);

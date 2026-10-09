@@ -124,6 +124,7 @@ const statements = {
         INSERT INTO users (identifier, companion) VALUES (?, ?)
         ON CONFLICT(identifier) DO UPDATE SET companion = excluded.companion`),
     setLocale: db.prepare("UPDATE users SET locale = ? WHERE identifier = ?"),
+    deleteUser: db.prepare("DELETE FROM users WHERE identifier = ? COLLATE NOCASE"),
     search: db.prepare(`
         SELECT * FROM users
         WHERE ? = '' OR username LIKE ? OR name LIKE ? OR email LIKE ? OR identifier LIKE ?
@@ -169,6 +170,10 @@ export const users = {
     },
     setCompanion(identifier: string, companion: string | null) {
         statements.setCompanion.run(identifier, companion);
+    },
+    /** Forgets a user (bans stay, so a deleted troublemaker cannot come back under the same account). */
+    remove(identifier: string) {
+        statements.deleteUser.run(identifier);
     },
     setLocale(identifier: string, locale: string) {
         statements.setLocale.run(locale, identifier);
