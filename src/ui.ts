@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { bans, customWokas, listCustomWokas, listReports, listUsers, reports, rooms, users, type Access, type CustomWoka, type RoomSettings } from "./db.js";
 import { changeRoomStyle, createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled, roomMapExists, roomStyles, type RoomStyle } from "./access.js";
@@ -18,6 +19,7 @@ import { adminText, type AdminTexts } from "./adminI18n.js";
 import { createInvite, deleteInvite, invitesEnabled, listInvites, type Invite } from "./invites.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
+const OG_IMAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "og-image.png");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
 
 const SECRET = createHmac("sha256", config.apiToken).update("admin-ui-session").digest();
@@ -960,6 +962,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
             "X-Content-Type-Options": "nosniff",
         });
         return void fs.createReadStream(filePath).pipe(res);
+    }
+
+    // Link preview image (SITE_IMAGE default).
+    if (p === "/files/og-image.png" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "image/png", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400" });
+        return void fs.createReadStream(OG_IMAGE).pipe(res);
     }
 
     const card = /^\/card\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(p);

@@ -98,6 +98,14 @@ export const config = {
     /** WorkAdventure URL, used to show official wokas in previews. */
     playUrl: optional("PLAY_URL") ? trimSlash(optional("PLAY_URL")!) : undefined,
 
+    // ---------- Link previews (Discord, messengers, browser tab) ----------
+    /** Name shown in link previews and the browser tab, e.g. "graf-cedric.de". */
+    siteName: str("SITE_NAME", "WorkAdventure"),
+    /** Description for link previews when a room has none. */
+    siteDescription: optional("SITE_DESCRIPTION"),
+    /** Preview image (1200 × 630); defaults to the office picture served by the admin UI. */
+    siteImage: optional("SITE_IMAGE") ?? (optional("PUBLIC_URL") ? `${trimSlash(optional("PUBLIC_URL")!)}/files/og-image.png` : undefined),
+
     // ---------- Invites (optional) ----------
     /** authentik API token; enables creating registration invites from the admin UI and the game. */
     authentikToken: optional("AUTHENTIK_TOKEN"),

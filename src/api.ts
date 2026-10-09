@@ -6,6 +6,7 @@ import { canEnter, isOwner, roomsVisibleFor, storagePath } from "./access.js";
 import { HttpError, queryList, queryString, readJson, sendEmpty, sendJson } from "./http.js";
 import { identityFromAccessToken } from "./identity.js";
 import { visitCardUrl } from "./cards.js";
+import { listRooms } from "./mapStorage.js";
 import { langFrom, matchLang, t } from "./i18n.js";
 import { companionDetail, companions, wokaDetailsFor, wokaListFor, type Viewer } from "./wokas.js";
 
@@ -99,7 +100,26 @@ function parseUrl(value: string | undefined, name: string): URL {
 
 // ---------- /api/map ----------
 
-function mapDetails(playUri: URL) {
+/**
+ * Title, description and image for link previews (Discord, messengers) and the browser tab.
+ * Room name and description come from the admin UI, otherwise from the map.
+ */
+async function metatags(path: string | undefined) {
+    const settings = path ? rooms.get(path) : undefined;
+    const room = path ? (await listRooms().catch(() => [])).find((r) => r.roomUrl === "/~/" + path) : undefined;
+    const name = settings?.name || room?.name;
+    const description = settings?.description || config.siteDescription || room?.description || undefined;
+    return {
+        title: name && name !== config.siteName ? `${name} · ${config.siteName}` : config.siteName,
+        ...(description ? { description } : {}),
+        appName: config.siteName,
+        provider: config.siteName,
+        author: config.siteName,
+        ...(config.siteImage ? { cardImage: config.siteImage } : {}),
+    };
+}
+
+async function mapDetails(playUri: URL) {
     if (playUri.pathname === "/") {
         return { redirectUrl: new URL(config.startRoomUrl, playUri).toString() };
     }
@@ -123,6 +143,7 @@ function mapDetails(playUri: URL) {
     }
 
     return {
+        metatags: await metatags(wamUrl ? storagePath(playUri) : undefined),
         mapUrl,
         wamUrl,
         editable: wamUrl !== undefined && config.enableMapEditor,
@@ -248,7 +269,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
     switch (route) {
         case "GET /api/map":
-            return sendJson(res, 200, mapDetails(parseUrl(queryString(q, "playUri"), "playUri")));
+            return sendJson(res, 200, await mapDetails(parseUrl(queryString(q, "playUri"), "playUri")));
 
         case "GET /api/room/access":
             return sendJson(res, 200, await roomAccess(q, req.headers["accept-language"]));

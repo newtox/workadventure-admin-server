@@ -78,6 +78,9 @@ The UI runs on a second port (`UI_PORT`, default `3001`) and is only enabled whe
 | `PLAY_URL` | – | WorkAdventure URL, to show official wokas in the member list |
 | `UI_PORT` | `3001` | |
 | `TIME_ZONE` | `TZ`, else `Europe/Berlin` | Time zone for dates in the admin UI |
+| `SITE_NAME` | `WorkAdventure` | Name in link previews (Discord etc.) and the browser tab, combined with the room name |
+| `SITE_DESCRIPTION` | – | Preview text when a room has no description of its own (set those in the admin UI under Rooms) |
+| `SITE_IMAGE` | `PUBLIC_URL/files/og-image.png` | Preview image, 1200 × 630 |
 | `AUTHENTIK_TOKEN` | – | authentik API token. Enables invites: an "Invites" page in the admin UI, and admins can create a link in the game under Menu → Profile |
 | `AUTHENTIK_URL` | origin of `OIDC_ISSUER` | authentik base URL |
 | `INVITE_FLOW` | `wa-einladung` | Slug of the enrollment flow that contains the invitation stage |
