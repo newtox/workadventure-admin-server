@@ -51,7 +51,13 @@ const isAnonymous = (identifier: string | undefined, accessToken: string | undef
  * (which only know tags) can also be given to single persons.
  */
 export function personalTag(username: string | null | undefined): string | undefined {
-    const slug = (username ?? "").toLowerCase().replace(/[^a-z0-9._-]+/g, "");
+    // Lower case, accents removed ("Jürgen" → "jurgen"), spaces and other characters dropped ("Graf Cedric" → "grafcedric").
+    const slug = (username ?? "")
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/ß/g, "ss")
+        .replace(/[^a-z0-9._-]+/g, "");
     return slug ? `@${slug}` : undefined;
 }
 

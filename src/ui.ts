@@ -12,6 +12,7 @@ import { identityFromClaims, oidcEndpoints } from "./identity.js";
 import { WOKA_PARTS, wokaListFor } from "./wokas.js";
 import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
+import { personalTag } from "./api.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -377,7 +378,8 @@ function membersPage(s: Session, message?: string): string {
         .map((u) => {
             const details = u.textures ? wokaDetails(u.identifier, u.tags, u.textures) : [];
             const avatar = `<div class="layers">${details.map((d) => `<div style="background-image:url('${esc(layerUrl(d))}')"></div>`).join("")}</div>`;
-            const tags = u.tags.map((t) => `<span class="tag${t === config.adminTag ? " admin" : ""}">${esc(t)}</span>`).join("");
+            const own = personalTag(u.username);
+            const tags = u.tags.map((t) => `<span class="tag${t === config.adminTag ? " admin" : ""}">${esc(t)}</span>`).join("") + (own ? `<br><small class="sub" title="Persönlicher Tag für Bereichsrechte im Karteneditor">${esc(own)}</small>` : "");
             const ban = bans.get(u.identifier);
             const action = ban
                 ? `<form method="post" action="/members/unban"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:0">Entsperren</button></form>`
