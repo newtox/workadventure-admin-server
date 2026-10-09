@@ -136,8 +136,8 @@ function mapDetails(playUri: URL) {
         loginSceneLogo: null,
         errorSceneLogo: null,
         showPoweredBy: true,
-        enableMatrixChat: false,
         enableChat: config.enableChat,
+        enableMatrixChat: config.enableChat && !!config.matrixDomain,
         enableChatUpload: config.enableChatUpload,
         enableChatOnlineList: config.enableChatOnlineList,
         enableChatDisconnectedList: config.enableChatDisconnectedList,
@@ -316,7 +316,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             const found = users.search(queryString(q, "searchText") ?? "", 500);
             return sendJson(res, 200, {
                 total: found.length,
-                members: found.map((u) => ({ uuid: u.identifier, wokaName: u.username ?? undefined, email: u.email ?? u.identifier, tags: u.tags })),
+                members: found.map((u) => ({ uuid: u.identifier, wokaName: u.username ?? undefined, email: u.email ?? u.identifier, chatId: matrixId(u.identifier) ?? undefined, tags: u.tags })),
             });
         }
 
@@ -346,6 +346,12 @@ function knownTags(): string[] {
     return [...new Set([...config.knownTags, ...users.allTags()])].sort().concat([...new Set(personal)].sort());
 }
 
+/** Matrix id WorkAdventure gives a logged-in user: "@" + email with "@" replaced by "_" + ":" + MATRIX_DOMAIN. */
+export function matrixId(identifier: string): string | null {
+    if (!config.matrixDomain || !identifier || /^[0-9a-f-]{36}$/.test(identifier)) return null;
+    return `@${identifier.replace("@", "_")}:${config.matrixDomain}`;
+}
+
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
-    return { id: u.identifier, name: u.username ?? u.name ?? null, email: u.email ?? u.identifier, visitCardUrl: visitCardUrl(u.identifier), chatID: null };
+    return { id: u.identifier, name: u.username ?? u.name ?? null, email: u.email ?? u.identifier, visitCardUrl: visitCardUrl(u.identifier), chatID: matrixId(u.identifier) };
 }

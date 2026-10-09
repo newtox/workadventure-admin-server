@@ -57,6 +57,11 @@ export const config = {
     knownTags: list("KNOWN_TAGS", "admin,editor,moderator,freunde,vip,member"),
 
     enableChat: bool("ENABLE_CHAT", true),
+    /**
+     * Matrix server name (MATRIX_DOMAIN of WorkAdventure). When set, the Matrix chat (direct messages,
+     * chat rooms) is enabled and members get their Matrix id, so they can be messaged from the member list.
+     */
+    matrixDomain: optional("MATRIX_DOMAIN"),
     enableChatUpload: bool("ENABLE_CHAT_UPLOAD", true),
     enableChatOnlineList: bool("ENABLE_CHAT_ONLINE_LIST", true),
     enableChatDisconnectedList: bool("ENABLE_CHAT_DISCONNECTED_LIST", true),

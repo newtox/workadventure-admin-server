@@ -58,6 +58,7 @@ All endpoints except capabilities, logout and the upload check require `Authoriz
 | `ENABLE_TUTORIAL` | `true` | |
 | `UPLOAD_MAX_FILESIZE` | `10485760` | Chat upload limit in bytes |
 | `PERSONAL_ROOM_TEMPLATE` | – | Map copied for personal rooms, e.g. `maps/zimmer.wam`; enables personal rooms. Further styles are found automatically: every `zimmer-stil-<key>.wam` in the same folder (known keys: `loft`, `gemuetlich`, `dunkel`, `gross`; the template itself is `holz`). Players pick a style in their profile and can switch later, which replaces the room's map |
+| `MATRIX_DOMAIN` | – | Same value as WorkAdventure's `MATRIX_DOMAIN`. Enables the Matrix chat (direct messages, chat rooms) and gives members their Matrix id |
 | `PERSONAL_ROOM_DIR` | `zimmer` | Map storage folder for personal rooms. Must not be a folder you upload maps to: an upload deletes every map in its folder that is not part of the upload |
 | `MAP_STORAGE_TOKEN` | – | Map storage API token (`MAP_STORAGE_AUTHENTICATION_TOKEN`), needed to copy the template |
 | `PERSONAL_ROOM_TAGS` | – | Roles that may create a personal room (empty: everyone logged in) |
