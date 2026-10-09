@@ -410,7 +410,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
 
     if (p === "/login") return startLogin(res);
     if (p === "/callback") return finishLogin(req, res, url.searchParams);
-    if (p === "/logout") return redirect(res, "/", [cookie(SESSION_COOKIE, "", 0)]);
+    if (p === "/logout") {
+        // Only ends the admin session. Going back to "/" would log in again silently through the
+        // still active Authentik session, so show a page instead and offer to log out there too.
+        const endSession = (await oidcEndpoints())?.end_session_endpoint;
+        res.setHeader("Set-Cookie", cookie(SESSION_COOKIE, "", 0));
+        return html(res, 200, layout("Abgemeldet", undefined, "", `<div class="card"><h1>Abgemeldet</h1>
+<p>Du bist aus der Admin-Oberfläche abgemeldet.</p>
+<a class="button" href="/login">Wieder anmelden</a>
+${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" href="${esc(endSession)}">Auch bei Authentik abmelden</a>` : ""}</div>`));
+    }
 
     const session = verify<Session>(cookies(req)[SESSION_COOKIE]);
     if (!session || !session.tags.includes(config.adminTag)) {
