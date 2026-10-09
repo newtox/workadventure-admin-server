@@ -125,15 +125,14 @@ CLIPBOARD_SIDE = ["k.",
                   "kb",
                   "kk"]
 
-LAPTOP_EDGE = ["kkk",
-               "ksk",
-               "kSk",
-               "ksk",
-               "ksk",
-               "ksk",
-               "kSk",
-               "ksk",
-               "kkk"]
+LAPTOP_EDGE = ["kkkkkkk",
+               "ksssssk",
+               "ksssssk",
+               "kssSssk",
+               "ksSwSsk",
+               "kssSssk",
+               "ksssssk",
+               "kkkkkkk"]
 LAPTOP_SIDE = ["kkkkkkkkkk",
                "kssssssssk",
                "kssssSsssk",
@@ -293,7 +292,7 @@ def build(out_dir):
         ("office", {"de": "Büro", "en": "Office"}, [
             ("coffee-mug", handheld(MUG, MUG, MUG, grip=(3, 4))),
             ("coffee-to-go", handheld(TOGO, TOGO, TOGO, grip=(3, 5))),
-            ("laptop", handheld(LAPTOP_EDGE, LAPTOP_SIDE, LAPTOP_EDGE, grip=None)),
+            ("laptop", handheld(LAPTOP_EDGE, LAPTOP_SIDE, LAPTOP_EDGE, grip=(3, 5))),
             ("clipboard", handheld(CLIPBOARD, CLIPBOARD_SIDE, CLIPBOARD, grip=(3, 6))),
             ("smartphone", handheld(PHONE_FRONT, PHONE_SIDE, PHONE_BACK, grip=(2, 4))),
             ("badge-blue", lanyard((40, 90, 200), (60, 130, 230))),

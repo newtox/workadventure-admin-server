@@ -1,4 +1,4 @@
-# Generates extra woka parts: recoloured hair, eyes, glasses and hats from WorkAdventure's own customisation sprites,
+# Generates extra woka parts: recoloured hair, eyes and glasses from WorkAdventure's own customisation sprites,
 # plus the hand-drawn office and gaming accessories and headsets from gen_accessories.py.
 import os, re, sys, json, colorsys
 from PIL import Image
@@ -107,53 +107,11 @@ for n in (25, 27):
 extra = [f"character_eyes{n}.png" for n in range(31, 35) if os.path.exists(os.path.join(eye_dir, f"character_eyes{n}.png"))]
 collections["eyes"].append({"key": "glasses", "names": {"de": "Brillen", "en": "Glasses"}, "files": glasses, "bundled": extra})
 
-# ---------- hats in more colours ----------
-# The largest colour group of each hat (its fabric) is recoloured; small details (ties, buttons) keep their colour.
-FABRIC = {
-    "red":    ({"de": "Rot", "en": "Red"},       [(70,10,15),(150,25,35),(215,60,65),(245,140,140)], 0.0),
-    "blue":   ({"de": "Blau", "en": "Blue"},     [(15,25,80),(35,70,170),(75,130,230),(160,200,255)], 0.6),
-    "green":  ({"de": "Grün", "en": "Green"},    [(12,55,25),(30,115,55),(75,175,95),(160,225,170)], 0.36),
-    "yellow": ({"de": "Gelb", "en": "Yellow"},   [(110,80,0),(200,155,10),(240,205,50),(255,240,150)], 0.13),
-    "purple": ({"de": "Lila", "en": "Purple"},   [(45,18,85),(100,50,165),(155,105,215),(210,180,245)], 0.76),
-    "black":  ({"de": "Schwarz", "en": "Black"}, [(10,10,14),(28,28,36),(52,52,64),(90,90,108)], None),
-}
-def hsv(p): return colorsys.rgb_to_hsv(*[c/255 for c in p[:3]])
-def group(p):
-    h, s_, v = hsv(p)
-    return "n" if s_ < 0.25 else int(h * 12) % 12
-def fabric_variants(folder, prefix, label_suffix, skip=()):
-    d = os.path.join(SRC, folder)
-    files = [f for f in sorted(os.listdir(d), key=lambda f: (len(f), f)) if f.endswith(".png") and f not in skip]
-    cols = []
-    for key, (names, stops, hue) in FABRIC.items():
-        items = []
-        for f in files:
-            im = Image.open(os.path.join(d, f)).convert("RGBA")
-            data = list(im.getdata())
-            opaque = [p for p in data if p[3] > 0]
-            if len(opaque) < 20: continue
-            counts = {}
-            for p in opaque: counts[group(p)] = counts.get(group(p), 0) + 1
-            main = max(counts, key=counts.get)
-            mainpx = [p for p in opaque if group(p) == main]
-            # skip variants that would look like the original
-            if hue is None and main == "n" and sum(lum(p) for p in mainpx) / len(mainpx) < 70: continue
-            if hue is not None and main != "n" and min(abs(main / 12 - hue), 1 - abs(main / 12 - hue)) < 0.06: continue
-            lo = min(lum(p) for p in mainpx); hi = max(lum(p) for p in mainpx)
-            im.putdata([(ramp(stops, (lum(p) - lo) / (hi - lo or 1)) + (p[3],)) if p[3] > 0 and group(p) == main else p for p in data])
-            stem = re.sub(r"[^a-z0-9]+", "-", f.replace(".png", "").replace("character_clothes", "").replace("character_hats", "").lower()).strip("-")
-            name = f"{prefix}-{key}-{stem}.png"
-            im.save(os.path.join(OUT, name), optimize=True)
-            items.append(name)
-        cols.append({"key": key, "names": {"de": f"{names['de']} {label_suffix['de']}", "en": f"{names['en']} {label_suffix['en']}"}, "files": items})
-    return cols
-collections["hat"] = fabric_variants("character_hats", "hat", {"de": "(Hüte)", "en": "(hats)"})
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_accessories import build
 drawn = build(OUT)
 collections["accessory"] = drawn["accessory"]
-collections["hat"] = drawn["hat"] + collections["hat"]
+collections["hat"] = drawn["hat"]
 
 json.dump(collections, open(os.path.join(OUT, "parts.json"), "w"), indent=1, ensure_ascii=False)
 print({k: sum(len(c["files"]) + len(c.get("bundled", [])) for c in v) for k, v in collections.items()})
