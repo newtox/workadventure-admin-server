@@ -66,6 +66,18 @@ export const config = {
     enableReport: bool("ENABLE_REPORT", true),
     /** Maximum size of files uploaded in the chat (bytes). */
     uploadMaxFilesize: Number(str("UPLOAD_MAX_FILESIZE", String(10 * 1024 * 1024))),
+
+    // ---------- Admin UI (optional) ----------
+    /** Public URL of the admin UI, e.g. https://workadventure-admin.example.com. Enables the UI. */
+    publicUrl: optional("PUBLIC_URL") ? trimSlash(optional("PUBLIC_URL")!) : undefined,
+    uiPort: Number(str("UI_PORT", "3001")),
+    oidcClientId: optional("OIDC_CLIENT_ID"),
+    oidcClientSecret: optional("OIDC_CLIENT_SECRET"),
+    oidcScope: str("OIDC_SCOPE", "openid email profile wa"),
+    /** Role required to use the admin UI. */
+    adminTag: str("ADMIN_TAG", "admin"),
+    /** WorkAdventure URL, used to show official wokas in previews. */
+    playUrl: optional("PLAY_URL") ? trimSlash(optional("PLAY_URL")!) : undefined,
 } as const;
 
 export type Config = typeof config;

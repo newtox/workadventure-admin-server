@@ -6,7 +6,8 @@ WorkAdventure without an admin API keeps the chosen woka only in the browser and
 
 - **Roles are live.** On every page load and room change the user's roles are read from the OpenID provider's userinfo endpoint with the user's access token (claim `tags` by default). Group changes apply after a reload, no new login needed. The last known roles are used as a fallback.
 - **Wokas and companions are saved per account**, so they follow the user to every browser and device. A woka chosen in the browser before the admin API existed is taken over on the first visit.
-- **Custom wokas** can be restricted to roles or single users (table `custom_wokas`; an admin UI is planned).
+- **Custom wokas**, uploaded in the admin UI and restricted to everyone, roles or single users.
+- **Admin UI** (login through OpenID Connect, admin role only): custom wokas with walking preview, members with their roles and woka, player reports.
 - **Map editor rights** come from roles (`EDITOR_TAGS`, default `admin,editor`) or a list of users.
 - **Room list** from the map storage, with relative thumbnails (e.g. the `mapImage` of the Tiled map) turned into working URLs.
 - Member and tag search, player reports, and chat upload limits for the uploader.
@@ -51,7 +52,22 @@ All endpoints except capabilities, logout and the upload check require `Authoriz
 | `ENABLE_ISSUE_REPORT` | `false` | |
 | `ENABLE_TUTORIAL` | `true` | |
 | `UPLOAD_MAX_FILESIZE` | `10485760` | Chat upload limit in bytes |
-| `DATA_DIR` | `/data` | SQLite database location (writable by UID 1000) |
+| `DATA_DIR` | `/data` | SQLite database and uploaded wokas (writable by UID 1000) |
+
+### Admin UI
+
+The UI runs on a second port (`UI_PORT`, default `3001`) and is only enabled when `PUBLIC_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` are set. Only that port should be published behind the reverse proxy; the API port stays inside the Docker network. Uploaded woka images are served publicly from `/files/wokas/` (with CORS), because players' browsers load them.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PUBLIC_URL` | – | e.g. `https://workadventure-admin.example.com` |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – | OpenID client; the WorkAdventure client can be reused if `PUBLIC_URL/callback` is added as redirect URI |
+| `OIDC_SCOPE` | `openid email profile wa` | Must include the scope that provides the roles claim |
+| `ADMIN_TAG` | `admin` | Role required to log in |
+| `PLAY_URL` | – | WorkAdventure URL, to show official wokas in the member list |
+| `UI_PORT` | `3001` | |
+
+Woka images must be PNGs of 96 × 128 pixels: 3 walking frames side by side, 4 directions below each other (down, left, right, up). A complete character uses the type `woka`; parts (`body`, `eyes`, `hair`, `clothes`, `hat`, `accessory`) are layered over each other like the official ones.
 
 ## Running next to WorkAdventure
 
@@ -69,10 +85,16 @@ ADMIN_API_TOKEN=<random secret>
     environment:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       OIDC_ISSUER: ${OPENID_CLIENT_ISSUER}
+      OIDC_CLIENT_ID: ${OPENID_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OPENID_CLIENT_SECRET}
+      PUBLIC_URL: https://workadventure-admin.example.com
+      PLAY_URL: https://${DOMAIN}
       PUBLIC_MAP_STORAGE_URL: https://${DOMAIN}/map-storage
       START_ROOM_URL: ${START_ROOM_URL}
       DISABLE_ANONYMOUS: ${DISABLE_ANONYMOUS}
       OPENID_WOKA_NAME_POLICY: ${OPENID_WOKA_NAME_POLICY}
+    ports:
+      - "127.0.0.1:8096:3001"   # admin UI only
     volumes:
       - /docker_volumes/workadventure/admin:/data
 ```

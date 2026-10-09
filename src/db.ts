@@ -100,6 +100,12 @@ const statements = {
     allTags: db.prepare("SELECT tags FROM users"),
     insertReport: db.prepare("INSERT INTO reports (reported, reporter, comment, room) VALUES (?, ?, ?, ?)"),
     customWokas: db.prepare("SELECT * FROM custom_wokas ORDER BY part, position, name"),
+    customWoka: db.prepare("SELECT * FROM custom_wokas WHERE id = ?"),
+    insertWoka: db.prepare("INSERT INTO custom_wokas (id, part, name, url, access, position) VALUES (?, ?, ?, ?, ?, ?)"),
+    updateWoka: db.prepare("UPDATE custom_wokas SET name = ?, part = ?, access = ?, url = ? WHERE id = ?"),
+    deleteWoka: db.prepare("DELETE FROM custom_wokas WHERE id = ?"),
+    allUsers: db.prepare("SELECT * FROM users ORDER BY last_seen DESC"),
+    allReports: db.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 200"),
 };
 
 export const users = {
@@ -146,13 +152,57 @@ export interface CustomWoka {
     position: number;
 }
 
-export function listCustomWokas(): CustomWoka[] {
-    return (statements.customWokas.all() as Record<string, unknown>[]).map((row) => ({
+function toWoka(row: Record<string, unknown>): CustomWoka {
+    return {
         id: String(row.id),
         part: String(row.part),
         name: String(row.name),
         url: String(row.url),
         access: parseJson(row.access, { everyone: true }),
         position: Number(row.position),
+    };
+}
+
+export function listCustomWokas(): CustomWoka[] {
+    return (statements.customWokas.all() as Record<string, unknown>[]).map(toWoka);
+}
+
+export const customWokas = {
+    get(id: string): CustomWoka | undefined {
+        const row = statements.customWoka.get(id) as Record<string, unknown> | undefined;
+        return row ? toWoka(row) : undefined;
+    },
+    add(woka: CustomWoka) {
+        statements.insertWoka.run(woka.id, woka.part, woka.name, woka.url, JSON.stringify(woka.access), woka.position);
+    },
+    update(woka: CustomWoka) {
+        statements.updateWoka.run(woka.name, woka.part, JSON.stringify(woka.access), woka.url, woka.id);
+    },
+    remove(id: string) {
+        statements.deleteWoka.run(id);
+    },
+};
+
+export function listUsers(): UserRow[] {
+    return (statements.allUsers.all() as Record<string, unknown>[]).map((r) => toUser(r)!);
+}
+
+export interface ReportRow {
+    id: number;
+    reported: string;
+    reporter: string;
+    comment: string;
+    room: string | null;
+    createdAt: string;
+}
+
+export function listReports(): ReportRow[] {
+    return (statements.allReports.all() as Record<string, unknown>[]).map((r) => ({
+        id: Number(r.id),
+        reported: String(r.reported),
+        reporter: String(r.reporter),
+        comment: String(r.comment),
+        room: (r.room as string | null) ?? null,
+        createdAt: String(r.created_at),
     }));
 }
