@@ -97,6 +97,16 @@ export const config = {
     adminTag: str("ADMIN_TAG", "admin"),
     /** WorkAdventure URL, used to show official wokas in previews. */
     playUrl: optional("PLAY_URL") ? trimSlash(optional("PLAY_URL")!) : undefined,
+
+    // ---------- Invites (optional) ----------
+    /** authentik API token; enables creating registration invites from the admin UI and the game. */
+    authentikToken: optional("AUTHENTIK_TOKEN"),
+    /** authentik base URL; defaults to the origin of OIDC_ISSUER. */
+    authentikUrl: trimSlash(optional("AUTHENTIK_URL") ?? (optional("OIDC_ISSUER") ? new URL(optional("OIDC_ISSUER")!).origin : "")),
+    /** Slug of the enrollment flow with the invitation stage. */
+    inviteFlow: str("INVITE_FLOW", "wa-einladung"),
+    /** Default validity of new invites in days. */
+    inviteDays: Number(str("INVITE_DAYS", "7")),
 } as const;
 
 export type Config = typeof config;

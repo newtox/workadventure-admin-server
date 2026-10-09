@@ -15,6 +15,7 @@ import { identityFromAccessToken } from "./identity.js";
 import { personalTag } from "./api.js";
 import { langFrom, matchLang, styleLabel, t, type Lang } from "./i18n.js";
 import { adminText, type AdminTexts } from "./adminI18n.js";
+import { createInvite, deleteInvite, invitesEnabled, listInvites, type Invite } from "./invites.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -149,6 +150,9 @@ const ICONS: Record<string, string> = {
     rooms: '<path d="M3 21h18"/><path d="M6 21V4h12v17"/><path d="M14.5 12.5h.01"/>',
     members: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 13.8c2.1.8 3.5 2.9 3.5 5.2"/>',
     reports: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+    invites: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
     logout: '<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/>',
     upload: '<path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v4h16v-4"/>',
@@ -297,6 +301,11 @@ a.woka:hover{border-color:var(--primary);text-decoration:none;transform:translat
 .reports .row{grid-template-columns:170px minmax(0,1fr) 48px;align-items:start}
 .report-who{font-size:14px}.comment{margin:4px 0 0;white-space:pre-wrap;word-break:break-word}
 .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+.linkbox{display:flex;gap:8px;align-items:center}.linkbox input{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+.card.highlight{border-color:var(--primary);background:linear-gradient(180deg,var(--primary-soft),var(--surface) 70%)}
+.invites .list-head,.invites .row{grid-template-columns:minmax(0,1.6fr) 160px 100px 170px}
+.invites .row .actions{justify-content:flex-end}
+.form-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
 .search{position:relative;flex:1;max-width:340px}.search .i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint)}
 .search input{padding-left:38px}
 
@@ -319,14 +328,16 @@ a.woka:hover{border-color:var(--primary);text-decoration:none;transform:translat
   .me{padding:0;background:none;border:0}.me .ini,.me .name{display:none}
   .wrap{padding:20px 16px 96px}
   .ph h1{font-size:22px}
-  .tabbar{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;z-index:20;left:0;right:0;bottom:0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:rgba(17,24,41,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+  .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;z-index:20;left:0;right:0;bottom:0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:rgba(17,24,41,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
   .tabbar a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;border-radius:10px;color:var(--muted);font-size:11.5px;font-weight:500}
   .tabbar a:hover{text-decoration:none}.tabbar a.on{color:#fff}.tabbar a.on .i{color:var(--primary-2)}
   .tabbar .i{width:22px;height:22px}
   .split,.upload-grid{grid-template-columns:1fr}.split>.sticky{position:static}
   .list-head{display:none}
   .members .row,.rooms .row,.reports .row{grid-template-columns:1fr;gap:10px;padding:14px 16px}
-  .members .row .actions,.rooms .row .actions{justify-content:flex-start}
+  .members .row .actions,.rooms .row .actions,.invites .row .actions{justify-content:flex-start}
+  .invites .row{grid-template-columns:1fr;gap:8px;padding:14px 16px}.form-row{grid-template-columns:1fr;gap:0}
+  .tabbar a span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .reports .row{grid-template-columns:minmax(0,1fr) 40px}.reports .row>:nth-child(2){grid-column:1/-1;grid-row:2}
   .cell-label{display:block;color:var(--faint);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
   .rooms .row{grid-template-columns:84px minmax(0,1fr)}.rooms .row>.span{grid-column:1/-1}
@@ -343,7 +354,7 @@ function langSwitch(c: Ctx): string {
         .join("")}</span></div>`;
 }
 
-const NAV = ["wokas", "rooms", "members", "reports"] as const;
+const NAV = ["wokas", "rooms", "members", "invites", "reports"] as const;
 
 function layout(c: Ctx, title: string, active: string, body: string): string {
     const s = c.s;
@@ -633,6 +644,44 @@ ${rows || `<div class="empty">${icon("members")}<span>${a.membersNone}</span></d
 <script>const q=document.getElementById("q");q&&q.addEventListener("input",()=>{const v=q.value.trim().toLowerCase();document.querySelectorAll(".members .row").forEach(r=>{r.style.display=!v||r.dataset.search.includes(v)?"":"none"})});</script>`);
 }
 
+function invitesPage(c: Ctx, opts: { message?: string; error?: string; created?: Invite; list?: Invite[] } = {}): string {
+    const s = c.s!;
+    const a = c.a;
+    if (!invitesEnabled()) {
+        return layout(c, a.invitesTitle, "invites", `${pageHead(a.invitesTitle, undefined, a.invitesSub)}<div class="card empty">${icon("invites")}<span>${a.invitesOff}</span></div>`);
+    }
+    const list = opts.list ?? [];
+    const copyBtn = (url: string) => `<button type="button" class="secondary sm" data-copy="${esc(url)}">${icon("copy")}<span>${a.copy}</span></button>`;
+    const created = opts.created
+        ? `<div class="card highlight"><h2>${a.inviteCreated}</h2><div class="linkbox"><input type="text" readonly value="${esc(opts.created.url)}" id="newlink">${copyBtn(opts.created.url)}</div></div>`
+        : "";
+    const dayOptions = [1, 3, 7, 14, 30]
+        .map((d) => `<option value="${d}"${d === config.inviteDays ? " selected" : ""}>${a.days(d)}</option>`)
+        .join("");
+    const rows = list
+        .map(
+            (i) => `<div class="row"><div class="who"><div><strong>${esc(i.name)}</strong><span class="sub">${esc(i.url)}</span></div></div>
+<div class="small muted"><span class="cell-label">${a.expires}</span>${esc(fmtDate(i.expires, a))}</div>
+<div><span class="chip">${i.singleUse ? a.singleUse : a.multi}</span></div>
+<div class="actions">${copyBtn(i.url)}<form method="post" action="/invites/${encodeURIComponent(i.pk)}/delete" onsubmit="return confirm(${esc(JSON.stringify(a.confirmDeleteInvite))})">${csrfInput(s)}<button class="ghost sm icon-only" title="${a.deleteInvite}" aria-label="${a.deleteInvite}">${icon("trash")}</button></form></div></div>`,
+        )
+        .join("");
+    return layout(c, a.invitesTitle, "invites", `${flash(opts.message)}${flash(opts.error, true)}
+${pageHead(a.invitesTitle, a.invitesCount(list.length), a.invitesSub)}
+${created}
+<form method="post" action="/invites" class="card">${csrfInput(s)}<h2>${a.newInvite}</h2>
+<div class="form-row"><div class="field"><label for="for">${a.forWhom}</label><input id="for" name="for" type="text" maxlength="40" placeholder="Max"></div>
+<div class="field"><label for="days">${a.validFor}</label><select id="days" name="days">${dayOptions}</select></div></div>
+<div class="checks"><label><input type="checkbox" name="multi" value="1"> ${a.multiUse}</label></div>
+<button type="submit">${icon("plus")}${a.createInvite}</button></form>
+<div class="list invites"><div class="list-head"><span>${a.nav.invites}</span><span>${a.expires}</span><span></span><span></span></div>
+${rows || `<div class="empty">${icon("invites")}<span>${a.invitesNone}</span></div>`}</div>
+<script>document.querySelectorAll("[data-copy]").forEach(b=>b.addEventListener("click",async()=>{const l=b.querySelector("span");
+try{await navigator.clipboard.writeText(b.dataset.copy)}catch{const i=document.createElement("input");i.value=b.dataset.copy;document.body.append(i);i.select();document.execCommand("copy");i.remove()}
+const o=l.textContent;l.textContent=${JSON.stringify(a.copied)};setTimeout(()=>l.textContent=o,1500)}));
+const n=document.getElementById("newlink");n&&n.addEventListener("focus",()=>n.select());</script>`);
+}
+
 function wokaDetails(identifier: string, tags: string[], ids: string[]): string[] {
     const list = wokaListFor({ identifier, tags });
     const urls: string[] = [];
@@ -710,7 +759,7 @@ function cardPage(identifier: string, lang: Lang): string | undefined {
 }
 
 /** "Profil" tab in the WorkAdventure menu (OPENID_PROFILE_SCREEN_PROVIDER): own visit card and personal room. */
-async function profilePage(accessToken: string | null, browserLang: Lang, message?: (text: ReturnType<typeof t>) => string): Promise<string> {
+async function profilePage(accessToken: string | null, browserLang: Lang, message?: (text: ReturnType<typeof t>) => string, invite?: Invite): Promise<string> {
     const identity = await identityFromAccessToken(accessToken ?? undefined);
     const identifier = identity?.email;
     const user = identifier ? users.get(identifier) : undefined;
@@ -733,7 +782,10 @@ async function profilePage(accessToken: string | null, browserLang: Lang, messag
             .join("")}</div>
 <p class="hint">${text.avatarHint}</p>
 ${tag ? `<h2>${text.yourTag}</h2><p class="hint"><code>${esc(tag)}</code> – ${text.yourTagHint}</p>` : ""}
-${await personalRoomSection(viewer, accessToken!, lang, await roomStyles())}`;
+${await personalRoomSection(viewer, accessToken!, lang, await roomStyles())}
+${identity.tags.includes(config.adminTag) && invitesEnabled() && !invite ? inviteSection(accessToken!, lang) : ""}`;
+        // A freshly created invite link goes to the top, where the page opens.
+        if (invite && identity.tags.includes(config.adminTag)) body = inviteSection(accessToken!, lang, invite) + body;
     }
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
@@ -758,7 +810,18 @@ label{display:block;margin:10px 0 4px;color:rgba(255,255,255,.7)}input[type=text
 .style input:checked+span{border-color:${WA_BLUE}}.style input:focus-visible+span{outline:2px solid #fff}
 details{margin-top:14px}summary{cursor:pointer;color:rgba(255,255,255,.8)}
 .confirm{display:flex!important;gap:8px;align-items:center;color:#fff!important}
+.link{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;border-color:${WA_BLUE}!important}
 </style></head><body>${body}</body></html>`;
+}
+
+/** Only for admins: create a registration invite link right from the game. */
+function inviteSection(accessToken: string, lang: Lang, invite?: Invite): string {
+    const text = t(lang);
+    return `<h2>${text.inviteTitle}</h2><div class="box"><p class="hint" style="margin:0">${text.inviteHint(config.inviteDays)}</p>
+${invite ? `<p class="hint" style="margin:12px 0 6px;color:#fff">${text.inviteCreated}</p><input type="text" readonly value="${esc(invite.url)}" class="link">` : ""}
+<form method="post" action="/profile/invite"><input type="hidden" name="accessToken" value="${esc(accessToken)}">
+<label for="for">${text.inviteFor}</label><input id="for" name="for" type="text" maxlength="40">
+<button class="btn" type="submit">${text.inviteCreate}</button></form></div>`;
 }
 
 function stylePicker(styles: RoomStyle[], lang: Lang, selected: string | null | undefined, current?: string | null): string {
@@ -915,16 +978,30 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
 
     if (p === "/profile" || p.startsWith("/profile/")) {
         const browserLang = langFrom(url.searchParams.get("lang"), req.headers["accept-language"]);
-        const sendProfile = async (accessToken: string | null, message?: (text: ReturnType<typeof t>) => string) => {
+        const sendProfile = async (accessToken: string | null, message?: (text: ReturnType<typeof t>) => string, invite?: Invite) => {
             res.writeHead(200, {
                 "Content-Type": "text/html; charset=utf-8",
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": `default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors ${config.playUrl ?? "*"}`,
                 "Referrer-Policy": "no-referrer",
             });
-            res.end(await profilePage(accessToken, browserLang, message));
+            res.end(await profilePage(accessToken, browserLang, message, invite));
         };
         if (req.method === "GET" && p === "/profile") return sendProfile(url.searchParams.get("accessToken"));
+        if (req.method === "POST" && p === "/profile/invite") {
+            const form = await readForm(req);
+            const accessToken = form.get("accessToken");
+            const identity = await identityFromAccessToken(accessToken ?? undefined);
+            if (!identity?.email || !identity.tags.includes(config.adminTag) || !invitesEnabled()) return sendProfile(accessToken);
+            try {
+                const invite = await createInvite({ by: identity.username ?? identity.name ?? identity.email.split("@")[0]!, forWhom: form.get("for") ?? "" });
+                console.info(`invite ${invite.name} created in the game by ${identity.email}`);
+                return sendProfile(accessToken, undefined, invite);
+            } catch (err) {
+                console.warn("creating invite failed:", err);
+                return sendProfile(accessToken, (text) => text.failed);
+            }
+        }
         if (req.method === "POST" && (p === "/profile/room" || p === "/profile/room/settings" || p === "/profile/room/style")) {
             const form = await readForm(req);
             const accessToken = form.get("accessToken");
@@ -1060,6 +1137,44 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
         return html(res, 200, membersPage({ ...ctx, path: "/members" }, a.unbannedMsg(nameOf(id))));
     }
     if (req.method === "GET" && p === "/reports") return html(res, 200, reportsPage(ctx));
+    if (p === "/invites" || /^\/invites\/[^/]+\/delete$/.test(p)) {
+        const render = async (opts: { message?: string; created?: Invite; error?: string } = {}) => {
+            let list: Invite[] = [];
+            let error = opts.error;
+            if (invitesEnabled()) {
+                try {
+                    list = await listInvites();
+                } catch (err) {
+                    console.warn("listing invites failed:", err);
+                    error = a.invitesError;
+                }
+            }
+            return html(res, 200, invitesPage({ ...ctx, path: "/invites" }, { ...opts, error, list }));
+        };
+        if (req.method === "GET" && p === "/invites") return render();
+        if (req.method === "POST" && invitesEnabled()) {
+            const form = await readForm(req);
+            checkCsrf(s, form.get("csrf"), a);
+            if (p === "/invites") {
+                try {
+                    const created = await createInvite({ by: s.name, forWhom: form.get("for") ?? "", days: Number(form.get("days")) || config.inviteDays, multiUse: form.get("multi") === "1" });
+                    console.info(`invite ${created.name} created by ${s.sub}`);
+                    return render({ created });
+                } catch (err) {
+                    console.warn("creating invite failed:", err);
+                    return render({ error: a.invitesError });
+                }
+            }
+            const pk = decodeURIComponent(p.split("/")[2]!);
+            try {
+                await deleteInvite(pk);
+                return render({ message: a.inviteDeleted });
+            } catch (err) {
+                console.warn("deleting invite failed:", err);
+                return render({ error: a.invitesError });
+            }
+        }
+    }
 
     if (req.method === "POST" && p === "/wokas") {
         checkCsrf(s, req.headers["x-csrf"] as string | undefined, a);
