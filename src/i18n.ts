@@ -1,4 +1,4 @@
-// Texts that players see (visit cards, profile tab, error screens). The admin UI stays German.
+// Texts that players see (visit cards, profile tab, error screens). The admin UI's texts are in adminI18n.ts.
 export type Lang = "de" | "en";
 
 /**

@@ -13,7 +13,8 @@ import { WOKA_PARTS, wokaListFor } from "./wokas.js";
 import { cardToken, identifierFromCardToken, roleStyle, WA_BLUE, WA_CONTRAST } from "./cards.js";
 import { identityFromAccessToken } from "./identity.js";
 import { personalTag } from "./api.js";
-import { langFrom, styleLabel, t, type Lang } from "./i18n.js";
+import { langFrom, matchLang, styleLabel, t, type Lang } from "./i18n.js";
+import { adminText, type AdminTexts } from "./adminI18n.js";
 
 const WOKA_DIR = path.join(config.dataDir, "wokas");
 fs.mkdirSync(WOKA_DIR, { recursive: true });
@@ -23,16 +24,6 @@ const SESSION_COOKIE = "wa_admin";
 const FLOW_COOKIE = "wa_admin_flow";
 const SESSION_HOURS = 8;
 const secure = config.publicUrl?.startsWith("https://") ?? false;
-
-const PART_LABELS: Record<string, string> = {
-    woka: "Kompletter Charakter",
-    body: "Körper",
-    eyes: "Augen",
-    hair: "Haare",
-    clothes: "Kleidung",
-    hat: "Hut",
-    accessory: "Accessoire",
-};
 
 // ---------- helpers ----------
 
@@ -92,12 +83,12 @@ function html(res: ServerResponse, status: number, body: string): void {
     res.end(body);
 }
 
-async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+async function readBody(req: IncomingMessage, limit: number, tooBig = "Datei zu groß / File too large"): Promise<Buffer> {
     let size = 0;
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
         size += (chunk as Buffer).length;
-        if (size > limit) throw new HttpError(413, "Datei zu groß");
+        if (size > limit) throw new HttpError(413, tooBig);
         chunks.push(chunk as Buffer);
     }
     return Buffer.concat(chunks);
@@ -108,15 +99,15 @@ async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
 }
 
 /** Checks that the upload is a PNG of 96 × 128 pixels (3 frames × 4 directions of 32 × 32). */
-function checkWokaPng(data: Buffer): void {
+function checkWokaPng(data: Buffer, a: AdminTexts): void {
     const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     if (data.length < 24 || !data.subarray(0, 8).equals(signature) || data.toString("ascii", 12, 16) !== "IHDR") {
-        throw new HttpError(400, "Das ist keine PNG-Datei.");
+        throw new HttpError(400, a.notPng);
     }
     const width = data.readUInt32BE(16);
     const height = data.readUInt32BE(20);
     if (width !== 96 || height !== 128) {
-        throw new HttpError(400, `Die Grafik muss 96 × 128 Pixel groß sein (ist ${width} × ${height}).`);
+        throw new HttpError(400, a.wrongSize(width, height));
     }
 }
 
@@ -137,55 +128,276 @@ interface Session {
 
 const csrfFor = (s: Session) => createHmac("sha256", SECRET).update(`csrf:${s.sub}:${s.exp}`).digest("base64url");
 
-function checkCsrf(s: Session, value: string | null | undefined): void {
+function checkCsrf(s: Session, value: string | null | undefined, a: AdminTexts): void {
     const expected = Buffer.from(csrfFor(s));
     const given = Buffer.from(value ?? "");
-    if (expected.length !== given.length || !timingSafeEqual(expected, given)) throw new HttpError(403, "Ungültiges Formular, bitte Seite neu laden.");
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) throw new HttpError(403, a.badForm);
 }
 
 // ---------- layout ----------
 
-const CSS = `
-:root{--bg:#14111f;--card:#221c35;--line:#3d3360;--text:#f3eefc;--muted:#a99cc9;--accent:#ff4fa3;--gold:#ffd84f;--ok:#4fd18b;--bad:#ff6b6b}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-monospace,"Courier New",monospace}
-a{color:var(--accent)}header{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;padding:14px 20px;border-bottom:3px solid var(--line);background:#1a1529}
-header strong{color:var(--accent);font-size:18px;margin-right:12px}header nav{display:flex;gap:16px;flex:1}header nav a{color:var(--text);text-decoration:none}
-header nav a.on{color:var(--accent)}header span{color:var(--muted);font-size:13px}main{max-width:1100px;margin:0 auto;padding:24px 16px}
-h1{font-size:22px;margin:0 0 6px}p.sub{color:var(--muted);margin:0 0 20px}
-.card{background:var(--card);border:3px solid var(--line);box-shadow:5px 5px 0 #000;padding:16px;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
-.woka{display:flex;gap:14px;align-items:flex-start}.woka h3{margin:0 0 4px;font-size:16px}.woka small{display:block;color:var(--muted)}
-.sprite{width:64px;height:64px;flex:none;background-size:192px 256px;background-repeat:no-repeat;image-rendering:pixelated;background-color:#2c2545;animation:walk .6s steps(3) infinite}
-.sprite.big{width:96px;height:96px;background-size:288px 384px;animation-name:walkbig}
-@keyframes walk{from{background-position:0 0}to{background-position:-192px 0}}@keyframes walkbig{from{background-position:0 0}to{background-position:-288px 0}}
-.dirs{display:flex;gap:8px}.dirs .sprite.big:nth-child(2){animation-name:walkbig2}.dirs .sprite.big:nth-child(3){animation-name:walkbig3}.dirs .sprite.big:nth-child(4){animation-name:walkbig4}
-@keyframes walkbig2{from{background-position:0 -96px}to{background-position:-288px -96px}}@keyframes walkbig3{from{background-position:0 -192px}to{background-position:-288px -192px}}@keyframes walkbig4{from{background-position:0 -288px}to{background-position:-288px -288px}}
-.tag{display:inline-block;background:#3d3360;color:var(--text);padding:0 6px;margin:2px 4px 0 0;font-size:12px}.tag.admin{background:#7a1f45}
-label{display:block;margin:10px 0 4px;color:var(--muted)}input[type=text],select,textarea{width:100%;padding:8px;background:#14111f;color:var(--text);border:2px solid var(--line);font:inherit}
-.checks{display:flex;flex-wrap:wrap;gap:6px 16px}.checks label{display:flex;gap:6px;align-items:center;margin:0;color:var(--text)}
-button,.button{display:inline-block;margin-top:14px;padding:8px 16px;background:var(--accent);color:#14111f;border:0;font:inherit;font-weight:bold;cursor:pointer;text-decoration:none;box-shadow:3px 3px 0 #000}
-button.secondary{background:#3d3360;color:var(--text)}button.danger{background:var(--bad)}
-.msg{padding:10px 14px;margin-bottom:16px;border-left:4px solid var(--ok);background:#1d2b25}.msg.err{border-color:var(--bad);background:#2b1d22}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:middle}th{color:var(--muted);font-weight:normal}
-.layers{position:relative;width:64px;height:64px;background:#2c2545}.layers div{position:absolute;inset:0;background-size:192px 256px;background-position:-64px 0;image-rendering:pixelated}
-.drop{border:3px dashed var(--line);padding:18px;text-align:center;cursor:pointer}.drop.over{border-color:var(--accent)}
-`;
-
-function layout(title: string, session: Session | undefined, active: string, body: string): string {
-    const nav = session
-        ? `<nav>${[["wokas", "Avatare"], ["rooms", "Räume"], ["members", "Mitglieder"], ["reports", "Meldungen"]]
-              .map(([href, label]) => `<a href="/${href}" class="${active === href ? "on" : ""}">${label}</a>`)
-              .join("")}</nav><span>${esc(session.name)} · <a href="/logout">Abmelden</a></span>`
-        : "";
-    return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} – WorkAdventure Admin</title><style>${CSS}</style></head>
-<body><header><strong>WorkAdventure Admin</strong>${nav}</header><main>${body}</main></body></html>`;
+/** What every admin page needs: the session (if logged in), the language and the current path for the language switch. */
+interface Ctx {
+    s?: Session;
+    lang: Lang;
+    a: AdminTexts;
+    path: string;
 }
 
-function accessSummary(w: CustomWoka): string {
-    if (w.access.everyone) return `<span class="tag">alle</span>`;
-    const parts = [...(w.access.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`), ...(w.access.users ?? []).map((u) => `<span class="tag">👤 ${esc(nameOf(u))}</span>`)];
-    return parts.length ? parts.join("") : `<span class="tag">niemand</span>`;
+const ICONS: Record<string, string> = {
+    wokas: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/>',
+    rooms: '<path d="M3 21h18"/><path d="M6 21V4h12v17"/><path d="M14.5 12.5h.01"/>',
+    members: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 13.8c2.1.8 3.5 2.9 3.5 5.2"/>',
+    reports: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+    logout: '<path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/>',
+    upload: '<path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v4h16v-4"/>',
+    back: '<path d="M15 6l-6 6 6 6"/>',
+    trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>',
+    ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+    home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
+};
+
+const icon = (name: string, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] ?? ""}</svg>`;
+
+const CSS = `
+:root{--bg:#0d1220;--side:#111829;--surface:#161e31;--surface-2:#1c2640;--line:#26314d;--line-2:#33406a;--text:#e9edf7;--muted:#8d99b6;--faint:#5f6b89;
+--primary:${WA_BLUE};--primary-2:#5b6dff;--primary-soft:rgba(65,86,246,.16);--danger:#e5484d;--danger-soft:rgba(229,72,77,.14);--ok:#2fb36f;--ok-soft:rgba(47,179,111,.14);
+--radius:14px;--radius-sm:9px;--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 10px 30px -12px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--primary-2);text-decoration:none}a:hover{text-decoration:underline}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--surface-2);padding:1px 6px;border-radius:6px}
+.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* shell */
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh;background:linear-gradient(90deg,var(--side) 0 247px,var(--line) 247px 248px,transparent 248px)}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:18px;padding:20px 14px}
+.brand{display:flex;align-items:center;gap:11px;padding:4px 8px;color:var(--text)}.brand:hover{text-decoration:none}
+.mark{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--primary),#8b5cf6);font-weight:800;font-size:14px;letter-spacing:.5px;color:#fff;box-shadow:0 6px 18px -6px rgba(65,86,246,.8)}
+.brand b{display:block;font-size:15px;line-height:1.15}.brand small{display:block;color:var(--muted);font-size:12px}
+.nav{display:flex;flex-direction:column;gap:3px}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--radius-sm);color:var(--muted);font-weight:500}
+.nav a:hover{background:var(--surface);color:var(--text);text-decoration:none}
+.nav a.on{background:var(--primary-soft);color:#fff}.nav a.on .i{color:var(--primary-2)}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:10px}
+.lang{display:flex;align-items:center;gap:8px;padding:0 8px;color:var(--muted);font-size:13px}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:2px}
+.seg a{padding:2px 10px;border-radius:999px;color:var(--muted);font-size:12px;font-weight:600}.seg a:hover{text-decoration:none;color:var(--text)}
+.seg a.on{background:var(--primary);color:#fff}
+.me{display:flex;align-items:center;gap:10px;padding:10px;border-radius:var(--radius-sm);background:var(--surface);border:1px solid var(--line)}
+.me .ini{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--surface-2);font-weight:700;font-size:13px}
+.me .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.me a{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--muted)}.me a:hover{background:var(--surface-2);color:var(--text)}
+.main{min-width:0}
+.wrap{max-width:1080px;margin:0 auto;padding:34px 28px 60px}
+.tabbar{display:none}
+
+/* page header */
+.ph{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:6px}
+.ph h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:-.01em}
+.meta{margin:4px 0 0;color:var(--muted);font-size:14px}
+.lead{margin:8px 0 24px;color:var(--muted);max-width:760px}
+.crumb{display:inline-flex;align-items:center;gap:4px;margin-bottom:14px;color:var(--muted);font-size:14px}.crumb:hover{color:var(--text);text-decoration:none}
+h2{font-size:16px;margin:0 0 12px}
+.hint{color:var(--muted);font-size:14px;margin:0 0 12px}
+
+/* surfaces */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:18px}
+.card.danger{border-color:rgba(229,72,77,.35)}
+.split{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:18px;align-items:start}
+.split>.sticky{position:sticky;top:24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:36px 16px;color:var(--muted);text-align:center}
+.empty .i{width:34px;height:34px;color:var(--faint)}
+
+/* flash messages */
+.msg{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;margin-bottom:18px;border-radius:var(--radius-sm);background:var(--ok-soft);border:1px solid rgba(47,179,111,.35)}
+.msg.err{background:var(--danger-soft);border-color:rgba(229,72,77,.4)}
+
+/* chips */
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);font-size:12.5px;line-height:1.6;white-space:nowrap}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.chip.solid{border:0;color:#fff;font-weight:600}
+.chip.warn{background:var(--danger-soft);border-color:rgba(229,72,77,.4);color:#ffb4b6}
+.tagline{display:block;margin-top:4px;color:var(--faint);font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* forms */
+.field{margin-bottom:16px}
+label,.label{display:block;margin:0 0 6px;color:var(--muted);font-size:13.5px;font-weight:500}
+input[type=text],input[type=search],select,textarea{width:100%;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--line-2);background:var(--bg);color:var(--text);font:inherit;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+textarea{resize:vertical}
+input[type=file]{width:100%;color:var(--muted);font:inherit;font-size:14px}
+input[type=file]::file-selector-button{margin-right:12px;padding:8px 14px;border-radius:var(--radius-sm);border:1px solid var(--line-2);background:var(--surface-2);color:var(--text);font:inherit;font-weight:600;cursor:pointer}
+.checks{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.checks label{display:inline-flex;align-items:center;gap:8px;margin:0;padding:7px 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font-size:14px;cursor:pointer;user-select:none;transition:background .15s,border-color .15s}
+.checks label:hover{border-color:var(--primary)}
+.checks label:has(input:checked){background:var(--primary-soft);border-color:var(--primary)}
+.checks input{accent-color:var(--primary);margin:0}
+.checks .sub{color:var(--muted);font-size:14px}
+.section-title{font-size:14px;font-weight:600;margin:4px 0 10px}
+
+/* buttons */
+button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 16px;border-radius:var(--radius-sm);border:1px solid transparent;background:var(--primary);color:#fff;font:inherit;font-weight:600;font-size:14px;cursor:pointer;text-decoration:none;transition:background .15s,border-color .15s,transform .05s}
+button:hover,.btn:hover{background:var(--primary-2);text-decoration:none}button:active,.btn:active{transform:translateY(1px)}
+button.secondary,.btn.secondary{background:var(--surface-2);border-color:var(--line-2);color:var(--text)}button.secondary:hover,.btn.secondary:hover{border-color:var(--primary)}
+button.danger,.btn.danger{background:var(--danger)}button.danger:hover,.btn.danger:hover{background:#f05a5f}
+button.ghost{background:transparent;color:var(--muted);border-color:var(--line)}button.ghost:hover{color:#fff;border-color:var(--danger);background:var(--danger-soft)}
+button.sm,.btn.sm{padding:6px 11px;font-size:13px}
+button.icon-only{padding:7px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.actions form{margin:0}
+form.inline{display:inline}
+
+/* sprites */
+.sprite{width:64px;height:64px;flex:none;background-size:192px 256px;background-repeat:no-repeat;image-rendering:pixelated;animation:walk .6s steps(3) infinite}
+.sprite.big{width:96px;height:96px;background-size:288px 384px;animation-name:walkbig}
+@keyframes walk{from{background-position:0 0}to{background-position:-192px 0}}@keyframes walkbig{from{background-position:0 0}to{background-position:-288px 0}}
+.dirs{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}.dirs .sprite{border-radius:12px;background-color:var(--surface-2)}
+.dirs .sprite.big:nth-child(2){animation-name:walkbig2}.dirs .sprite.big:nth-child(3){animation-name:walkbig3}.dirs .sprite.big:nth-child(4){animation-name:walkbig4}
+@keyframes walkbig2{from{background-position:0 -96px}to{background-position:-288px -96px}}@keyframes walkbig3{from{background-position:0 -192px}to{background-position:-288px -192px}}@keyframes walkbig4{from{background-position:0 -288px}to{background-position:-288px -288px}}
+.layers{position:relative;width:48px;height:48px;flex:none;border-radius:12px;background:var(--surface-2);overflow:hidden}
+.layers div{position:absolute;inset:-8px;background-size:192px 256px;background-position:-64px 0;image-rendering:pixelated}
+
+/* avatar cards */
+.woka{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:18px 16px;margin:0;color:var(--text);transition:border-color .15s,transform .15s}
+a.woka:hover{border-color:var(--primary);text-decoration:none;transform:translateY(-2px)}
+.woka .stage{display:grid;place-items:center;width:96px;height:96px;border-radius:16px;background:radial-gradient(circle at 50% 40%,var(--surface-2),var(--bg))}
+.woka h3{margin:0;font-size:15px}.woka .part{color:var(--muted);font-size:13px}
+.woka .chips{justify-content:center}
+.drop{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 16px;border:1.5px dashed var(--line-2);border-radius:var(--radius);text-align:center;cursor:pointer;color:var(--muted);transition:border-color .15s,background .15s}
+.drop .i{width:28px;height:28px;color:var(--primary-2)}.drop strong{color:var(--text)}
+.drop:hover,.drop.over{border-color:var(--primary);background:var(--primary-soft)}
+.upload-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;align-items:start}
+.upload-grid .dirs{justify-content:flex-start}
+.dirs.preview{display:grid;grid-template-columns:repeat(2,96px);justify-content:center}
+
+/* list rows (members, rooms, reports) */
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:18px}
+.list-head,.row{display:grid;align-items:center;gap:14px;padding:12px 18px}
+.list-head{color:var(--faint);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--line);background:rgba(255,255,255,.015)}
+.row{border-top:1px solid var(--line)}.list-head+.row,.list>.row:first-child{border-top:0}
+.row:hover{background:rgba(255,255,255,.015)}
+.row.dim{opacity:.6}
+.who{min-width:0;display:flex;align-items:center;gap:12px}
+.who>div{min-width:0}.who strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who .sub{display:block;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell-label{display:none}
+.muted{color:var(--muted)}.small{font-size:13px}
+.members .list-head,.members .row{grid-template-columns:minmax(0,2fr) minmax(0,1.6fr) 150px 236px}
+.members .row .actions,.rooms .row .actions{justify-content:flex-end}
+.rooms .list-head,.rooms .row{grid-template-columns:96px minmax(0,1.6fr) minmax(0,1.6fr) 130px}
+.thumb{width:96px;height:60px;border-radius:10px;object-fit:cover;image-rendering:pixelated;background:var(--surface-2);display:block}
+.reports .row{grid-template-columns:170px minmax(0,1fr) 48px;align-items:start}
+.report-who{font-size:14px}.comment{margin:4px 0 0;white-space:pre-wrap;word-break:break-word}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+.search{position:relative;flex:1;max-width:340px}.search .i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint)}
+.search input{padding-left:38px}
+
+/* centered pages (login messages) */
+.center{min-height:100vh;display:grid;place-items:center;padding:24px}
+.center .card{max-width:440px;width:100%;text-align:center;padding:32px 28px}
+.center .mark{margin:0 auto 14px;width:48px;height:48px;font-size:17px;border-radius:14px}
+.center h1{margin:0 0 8px;font-size:22px}.center p{color:var(--muted);margin:0 0 20px}
+.center .actions{justify-content:center}
+.center .lang{justify-content:center;margin-top:22px;padding:0}
+
+/* phones and small tablets */
+@media (max-width:860px){
+  .app{display:block;background:none}
+  .side{position:sticky;z-index:20;height:auto;flex-direction:row;align-items:center;gap:10px;padding:10px 14px;border-right:0;border-bottom:1px solid var(--line);background:rgba(17,24,41,.92);backdrop-filter:blur(10px)}
+  .side .nav{display:none}
+  .brand small{display:none}.mark{width:32px;height:32px;font-size:13px}
+  .side-foot{margin:0 0 0 auto;flex-direction:row;align-items:center;gap:8px}
+  .lang{padding:0}.lang .i,.lang .lbl{display:none}
+  .me{padding:0;background:none;border:0}.me .ini,.me .name{display:none}
+  .wrap{padding:20px 16px 96px}
+  .ph h1{font-size:22px}
+  .tabbar{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;z-index:20;left:0;right:0;bottom:0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:rgba(17,24,41,.96);backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+  .tabbar a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;border-radius:10px;color:var(--muted);font-size:11.5px;font-weight:500}
+  .tabbar a:hover{text-decoration:none}.tabbar a.on{color:#fff}.tabbar a.on .i{color:var(--primary-2)}
+  .tabbar .i{width:22px;height:22px}
+  .split,.upload-grid{grid-template-columns:1fr}.split>.sticky{position:static}
+  .list-head{display:none}
+  .members .row,.rooms .row,.reports .row{grid-template-columns:1fr;gap:10px;padding:14px 16px}
+  .members .row .actions,.rooms .row .actions{justify-content:flex-start}
+  .reports .row{grid-template-columns:minmax(0,1fr) 40px}.reports .row>:nth-child(2){grid-column:1/-1;grid-row:2}
+  .cell-label{display:block;color:var(--faint);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+  .rooms .row{grid-template-columns:84px minmax(0,1fr)}.rooms .row>.span{grid-column:1/-1}
+  .thumb{width:84px;height:54px}
+  .toolbar .search{max-width:none}
+  .card{padding:16px}
+}
+`;
+
+function langSwitch(c: Ctx): string {
+    const back = encodeURIComponent(c.path);
+    return `<div class="lang">${icon("globe")}<span class="lbl">${c.a.language}</span><span class="seg">${(["de", "en"] as const)
+        .map((l) => `<a href="/lang?to=${l}&amp;back=${back}" class="${c.lang === l ? "on" : ""}" hreflang="${l}">${l.toUpperCase()}</a>`)
+        .join("")}</span></div>`;
+}
+
+const NAV = ["wokas", "rooms", "members", "reports"] as const;
+
+function layout(c: Ctx, title: string, active: string, body: string): string {
+    const s = c.s;
+    const head = `<!doctype html><html lang="${c.a.htmlLang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111829"><title>${esc(title)} · WorkAdventure Admin</title><style>${CSS}</style></head>`;
+    if (!s) {
+        return `${head}<body><div class="center">${body}</div></body></html>`;
+    }
+    const links = () =>
+        NAV.map((key) => `<a href="/${key}" class="${active === key ? "on" : ""}"${active === key ? ' aria-current="page"' : ""}>${icon(key)}<span>${c.a.nav[key]}</span></a>`).join("");
+    return `${head}<body><div class="app">
+<aside class="side">
+<a class="brand" href="/"><span class="mark">WA</span><span><b>WorkAdventure</b><small>Admin</small></span></a>
+<nav class="nav">${links()}</nav>
+<div class="side-foot">${langSwitch(c)}
+<div class="me"><span class="ini">${esc((s.name || "?").charAt(0).toUpperCase())}</span><span class="name">${esc(s.name)}</span><a href="/logout" title="${c.a.logout}" aria-label="${c.a.logout}">${icon("logout")}</a></div></div>
+</aside>
+<main class="main"><div class="wrap">${body}</div></main>
+<nav class="tabbar">${links()}</nav>
+</div></body></html>`;
+}
+
+/** Centered card for pages without a session (login problems, logout). */
+function messagePage(c: Ctx, title: string, text: string, links: [string, string, string?][] = []): string {
+    return layout(c, title, "", `<div class="card"><span class="mark">WA</span><h1>${esc(title)}</h1><p>${esc(text)}</p>
+<div class="actions">${links.map(([href, label, cls]) => `<a class="btn ${cls ?? ""}" href="${esc(href)}">${esc(label)}</a>`).join("")}</div>${langSwitch(c)}</div>`);
+}
+
+const flash = (message?: string, error = false) => (message ? `<div class="msg${error ? " err" : ""}" role="status">${esc(message)}</div>` : "");
+
+function pageHead(title: string, meta?: string, lead?: string, actions = ""): string {
+    return `<header class="ph"><div><h1>${esc(title)}</h1>${meta ? `<p class="meta">${esc(meta)}</p>` : ""}</div>${actions}</header>${lead ? `<p class="lead">${esc(lead)}</p>` : '<div style="height:18px"></div>'}`;
+}
+
+function fmtDate(iso: string | null | undefined, a: AdminTexts): string {
+    if (!iso) return "–";
+    const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso.replace(" ", "T") + "Z");
+    if (Number.isNaN(d.getTime())) return iso;
+    try {
+        return d.toLocaleString(a.locale, { dateStyle: "medium", timeStyle: "short", timeZone: config.timeZone });
+    } catch {
+        return d.toLocaleString(a.locale, { dateStyle: "medium", timeStyle: "short" });
+    }
+}
+
+function roleChip(tag: string, lang: Lang): string {
+    const st = roleStyle(tag, lang);
+    return `<span class="chip"><span class="dot" style="background:${st.color}"></span>${esc(st.label)}</span>`;
+}
+
+function accessSummary(w: CustomWoka, c: Ctx): string {
+    if (w.access.everyone) return `<span class="chip">${c.a.everyone}</span>`;
+    const parts = [...(w.access.tags ?? []).map((tag) => roleChip(tag, c.lang)), ...(w.access.users ?? []).map((u) => `<span class="chip">👤 ${esc(nameOf(u))}</span>`)];
+    return parts.length ? parts.join("") : `<span class="chip">${c.a.nobody}</span>`;
 }
 
 function nameOf(identifier: string): string {
@@ -231,45 +443,46 @@ function accessFromForm(form: URLSearchParams, opaque = false): Access {
     };
 }
 
-function accessText(access: Access, owner?: string | null): string {
+function accessText(access: Access, c: Ctx, owner?: string | null): string {
     const parts: string[] = [];
-    if (owner) parts.push(`<span class="tag">🏠 ${esc(nameOf(owner))}</span>`);
-    if (access.everyone) return parts.join("") + `<span class="tag">alle</span>`;
-    for (const t of access.tags ?? []) parts.push(`<span class="tag">${esc(roleStyle(t).label)}</span>`);
-    for (const u of access.users ?? []) parts.push(`<span class="tag">👤 ${esc(nameOf(u))}</span>`);
-    return parts.length ? parts.join("") : `<span class="tag">nur Admins</span>`;
+    if (owner) parts.push(`<span class="chip">🏠 ${esc(nameOf(owner))}</span>`);
+    if (access.everyone) return parts.join("") + `<span class="chip">${c.a.everyone}</span>`;
+    for (const tag of access.tags ?? []) parts.push(roleChip(tag, c.lang));
+    for (const u of access.users ?? []) parts.push(`<span class="chip">👤 ${esc(nameOf(u))}</span>`);
+    return parts.length ? parts.join("") : `<span class="chip">${c.a.adminsOnly}</span>`;
 }
+
+const csrfInput = (s: Session) => `<input type="hidden" name="csrf" value="${esc(csrfFor(s))}">`;
 
 // ---------- pages ----------
 
-function wokasPage(s: Session, message?: string): string {
+function wokasPage(c: Ctx, message?: string): string {
+    const s = c.s!;
+    const a = c.a;
     const wokas = listCustomWokas();
     const cards = wokas.length
-        ? wokas
+        ? `<div class="grid">${wokas
               .map(
-                  (w) => `<div class="card woka"><div class="sprite" style="background-image:url('${esc(w.url)}')"></div>
-<div><h3>${esc(w.name)}</h3><small>${esc(PART_LABELS[w.part] ?? w.part)}</small><div>${accessSummary(w)}</div>
-<a href="/wokas/${encodeURIComponent(w.id)}">Bearbeiten</a></div></div>`,
+                  (w) => `<a class="card woka" href="/wokas/${encodeURIComponent(w.id)}"><span class="stage"><span class="sprite" style="background-image:url('${esc(w.url)}')"></span></span>
+<div><h3>${esc(w.name)}</h3><div class="part">${esc(a.parts[w.part] ?? w.part)}</div></div><div class="chips">${accessSummary(w, c)}</div></a>`,
               )
-              .join("")
-        : `<p class="sub">Noch keine eigenen Avatare.</p>`;
-    const partOptions = WOKA_PARTS.map((p) => `<option value="${p}">${esc(PART_LABELS[p])}</option>`).join("");
-    return layout("Avatare", s, "wokas", `
-${message ? `<div class="msg">${esc(message)}</div>` : ""}
-<h1>Eigene Avatare</h1>
-<p class="sub">PNG mit 96 × 128 Pixeln: 3 Laufbilder nebeneinander, 4 Richtungen untereinander (unten, links, rechts, oben). Offizielle Avatare kann weiterhin jeder nutzen.</p>
-<div class="grid">${cards}</div>
-<div class="card"><h2 style="margin-top:0;font-size:18px">Neuen Avatar hochladen</h2>
-<form id="upload">
-<label for="file" class="drop" id="drop">📂 PNG auswählen oder hierher ziehen<input id="file" type="file" accept="image/png" hidden></label>
-<div id="preview" class="dirs" style="margin-top:12px"></div>
-<label for="name">Name</label><input id="name" type="text" maxlength="40" required>
-<label for="part">Art</label><select id="part">${partOptions}</select>
-<div id="error" class="msg err" style="display:none;margin-top:12px"></div>
-<button type="submit">Hochladen</button>
-</form></div>
+              .join("")}</div>`
+        : `<div class="card empty">${icon("wokas")}<span>${a.wokasNone}</span></div>`;
+    const partOptions = WOKA_PARTS.map((p) => `<option value="${p}">${esc(a.parts[p] ?? p)}</option>`).join("");
+    return layout(c, a.wokasTitle, "wokas", `${flash(message)}
+${pageHead(a.wokasTitle, a.wokasCount(wokas.length), a.wokasSub)}
+<div class="card"><h2>${a.uploadTitle}</h2>
+<form id="upload">${csrfInput(s)}<div class="upload-grid">
+<div><label for="file" class="drop" id="drop">${icon("upload")}<strong>${a.dropHint}</strong><span class="small">${a.dropSize}</span><input id="file" type="file" accept="image/png" hidden></label>
+<div id="preview" class="dirs" style="margin-top:12px"></div></div>
+<div><div class="field"><label for="name">${a.name}</label><input id="name" type="text" maxlength="40" required></div>
+<div class="field"><label for="part">${a.type}</label><select id="part">${partOptions}</select></div>
+<div id="error" class="msg err" style="display:none"></div>
+<button type="submit">${icon("upload")}${a.upload}</button></div>
+</div></form></div>
+${cards}
 <script>
-const csrf=${JSON.stringify(csrfFor(s))};
+const csrf=${JSON.stringify(csrfFor(s))},T=${JSON.stringify({ chooseFirst: a.chooseFirst, failed: a.uploadFailed })};
 const file=document.getElementById("file"),drop=document.getElementById("drop"),preview=document.getElementById("preview"),err=document.getElementById("error");
 let chosen=null;
 function show(f){chosen=f;const url=URL.createObjectURL(f);preview.innerHTML=[0,1,2,3].map(()=>'<div class="sprite big" style="background-image:url('+url+')"></div>').join("");
@@ -279,97 +492,96 @@ file.addEventListener("change",()=>file.files[0]&&show(file.files[0]));
 ["dragleave","drop"].forEach(t=>drop.addEventListener(t,()=>drop.classList.remove("over")));
 drop.addEventListener("drop",e=>{e.preventDefault();e.dataTransfer.files[0]&&show(e.dataTransfer.files[0])});
 document.getElementById("upload").addEventListener("submit",async e=>{e.preventDefault();err.style.display="none";
- if(!chosen){err.textContent="Bitte zuerst eine PNG-Datei auswählen.";err.style.display="block";return}
+ if(!chosen){err.textContent=T.chooseFirst;err.style.display="flex";return}
  const r=await fetch("/wokas",{method:"POST",body:chosen,headers:{"Content-Type":"image/png","X-CSRF":csrf,"X-Woka-Name":encodeURIComponent(document.getElementById("name").value),"X-Woka-Part":document.getElementById("part").value}});
- const d=await r.json().catch(()=>({}));if(!r.ok){err.textContent=d.error||"Fehler beim Hochladen";err.style.display="block";return}
+ const d=await r.json().catch(()=>({}));if(!r.ok){err.textContent=d.error||T.failed;err.style.display="flex";return}
  location.href="/wokas/"+encodeURIComponent(d.id)+"?neu=1";});
 </script>`);
 }
 
-function wokaEditPage(s: Session, w: CustomWoka, message?: string): string {
-    const partOptions = WOKA_PARTS.map((p) => `<option value="${p}"${p === w.part ? " selected" : ""}>${esc(PART_LABELS[p])}</option>`).join("");
-    const tagChecks = knownTags()
-        .map((t) => `<label><input type="checkbox" name="tags" value="${esc(t)}"${w.access.tags?.includes(t) ? " checked" : ""}> ${esc(t)}</label>`)
-        .join("");
-    const allowedUsers = new Set((w.access.users ?? []).map((u) => u.toLowerCase()));
-    const known = listUsers().filter((u) => !u.identifier.match(/^[0-9a-f-]{36}$/));
-    const userChecks = known
-        .map(
-            (u) =>
-                `<label><input type="checkbox" name="users" value="${esc(u.identifier)}"${allowedUsers.has(u.identifier.toLowerCase()) ? " checked" : ""}> ${esc(u.username ?? u.name ?? u.identifier)}</label>`,
-        )
-        .join("");
-    const extraUsers = (w.access.users ?? []).filter((u) => !known.some((k) => k.identifier.toLowerCase() === u.toLowerCase()));
-    const csrf = csrfFor(s);
-    return layout(w.name, s, "wokas", `
-${message ? `<div class="msg">${esc(message)}</div>` : ""}
-<p><a href="/wokas">← Alle Avatare</a></p>
-<h1>${esc(w.name)}</h1>
-<div class="card"><div class="dirs">${[0, 1, 2, 3].map(() => `<div class="sprite big" style="background-image:url('${esc(w.url)}')"></div>`).join("")}</div></div>
-<form method="post" action="/wokas/${encodeURIComponent(w.id)}" class="card">
-<input type="hidden" name="csrf" value="${esc(csrf)}">
-<label for="name">Name</label><input id="name" name="name" type="text" maxlength="40" value="${esc(w.name)}" required>
-<label for="part">Art</label><select id="part" name="part">${partOptions}</select>
-<h2 style="font-size:16px;margin:20px 0 4px">Wer darf ihn benutzen?</h2>
-<div class="checks"><label><input type="checkbox" name="everyone" value="1"${w.access.everyone ? " checked" : ""}> Alle</label></div>
-<label>Rollen</label><div class="checks">${tagChecks}</div>
-<label>Personen</label><div class="checks">${userChecks || '<span class="sub">Noch niemand war eingeloggt.</span>'}</div>
-<label for="more">Weitere Personen (E-Mail, eine pro Zeile)</label><textarea id="more" name="more" rows="2">${esc(extraUsers.join("\n"))}</textarea>
-<button type="submit">Speichern</button>
+function wokaEditPage(c: Ctx, w: CustomWoka, message?: string): string {
+    const s = c.s!;
+    const a = c.a;
+    const text = t(c.lang);
+    const partOptions = WOKA_PARTS.map((p) => `<option value="${p}"${p === w.part ? " selected" : ""}>${esc(a.parts[p] ?? p)}</option>`).join("");
+    return layout(c, w.name, "wokas", `${flash(message)}
+<a class="crumb" href="/wokas">${icon("back")}${a.allAvatars}</a>
+${pageHead(w.name, a.parts[w.part] ?? w.part)}
+<div class="split">
+<div class="sticky"><div class="card"><h2>${a.preview}</h2><div class="dirs preview">${[0, 1, 2, 3].map(() => `<div class="sprite big" style="background-image:url('${esc(w.url)}')"></div>`).join("")}</div></div>
+<div class="card"><h2>${a.replaceImage}</h2><input id="file" type="file" accept="image/png"><div id="error" class="msg err" style="display:none;margin-top:12px"></div>
+<button id="replace" class="secondary" type="button" style="margin-top:12px">${icon("upload")}${a.uploadNewImage}</button></div></div>
+<div>
+<form method="post" action="/wokas/${encodeURIComponent(w.id)}" class="card">${csrfInput(s)}
+<div class="field"><label for="name">${a.name}</label><input id="name" name="name" type="text" maxlength="40" value="${esc(w.name)}" required></div>
+<div class="field"><label for="part">${a.type}</label><select id="part" name="part">${partOptions}</select></div>
+<h2 style="margin-top:22px">${a.whoMayUse}</h2>
+${accessFields(w.access, { everyoneLabel: text.everyone, lang: c.lang })}
+<div style="margin-top:16px"><button type="submit">${a.save}</button></div>
 </form>
-<div class="card"><h2 style="margin-top:0;font-size:16px">Grafik ersetzen</h2>
-<input id="file" type="file" accept="image/png"><div id="error" class="msg err" style="display:none;margin-top:12px"></div>
-<button id="replace" class="secondary" type="button">Neue Grafik hochladen</button></div>
-<form method="post" action="/wokas/${encodeURIComponent(w.id)}/delete" class="card" onsubmit="return confirm('Avatar wirklich löschen? Wer ihn trägt, muss sich einen neuen aussuchen.')">
-<input type="hidden" name="csrf" value="${esc(csrf)}"><button class="danger" type="submit">Avatar löschen</button></form>
+<form method="post" action="/wokas/${encodeURIComponent(w.id)}/delete" class="card danger" onsubmit="return confirm(${esc(JSON.stringify(a.confirmDeleteAvatar))})">${csrfInput(s)}
+<h2>${a.deleteAvatar}</h2><p class="hint">${a.deleteAvatarHint}</p><button class="danger" type="submit">${icon("trash")}${a.deleteAvatar}</button></form>
+</div></div>
 <script>
 document.getElementById("replace").addEventListener("click",async()=>{const f=document.getElementById("file").files[0],err=document.getElementById("error");
- if(!f){err.textContent="Bitte eine PNG-Datei auswählen.";err.style.display="block";return}
- const r=await fetch(location.pathname+"/image",{method:"POST",body:f,headers:{"Content-Type":"image/png","X-CSRF":${JSON.stringify(csrf)}}});
- const d=await r.json().catch(()=>({}));if(!r.ok){err.textContent=d.error||"Fehler";err.style.display="block";return}location.reload();});
+ if(!f){err.textContent=${JSON.stringify(a.chooseFirst)};err.style.display="flex";return}
+ const r=await fetch(location.pathname+"/image",{method:"POST",body:f,headers:{"Content-Type":"image/png","X-CSRF":${JSON.stringify(csrfFor(s))}}});
+ const d=await r.json().catch(()=>({}));if(!r.ok){err.textContent=d.error||${JSON.stringify(a.uploadFailed)};err.style.display="flex";return}location.reload();});
 </script>`);
 }
 
-async function roomsPage(s: Session, message?: string): Promise<string> {
+async function roomsPage(c: Ctx, message?: string): Promise<string> {
+    const a = c.a;
     let list: Awaited<ReturnType<typeof listRooms>> = [];
     let error = "";
     try {
         list = await listRooms();
-    } catch (err) {
-        error = "Die Map-Storage ist gerade nicht erreichbar.";
+    } catch {
+        error = a.storageDown;
     }
     const settings = new Map(rooms.all().map((r) => [r.path, r]));
+    const templates = new Map((await roomStyles(list).catch(() => [])).map((st) => [st.path, st.key]));
     const rows = list
         .map((room) => {
             const path = room.roomUrl.replace(/^\/~\//, "");
             const st = settings.get(path);
-            const template = path === config.personalRoomTemplate;
-            const thumb = room.thumbnail ? `<img src="${esc(room.thumbnail)}" alt="" style="width:96px;height:56px;object-fit:cover;image-rendering:pixelated">` : "";
-            return `<tr><td>${thumb}</td><td><strong>${esc(st?.name || room.name)}</strong><br><small class="sub">${esc(path)}</small></td>
-<td>${template ? '<span class="tag">Vorlage für Zimmer</span>' : st?.hidden ? '<span class="tag">versteckt</span>' + accessText(st.access, st.owner) : st ? accessText(st.access, st.owner) : '<span class="tag">alle</span>'}</td>
-<td><a href="/rooms/edit?path=${encodeURIComponent(path)}">Bearbeiten</a></td></tr>`;
+            const access = templates.has(path)
+                ? `<span class="chip">${a.template} · ${esc(styleLabel(templates.get(path)!, c.lang))}</span>`
+                : (st?.hidden ? `<span class="chip warn">${a.hidden}</span>` : "") + (st ? accessText(st.access, c, st.owner) : `<span class="chip">${a.everyone}</span>`);
+            const thumb = room.thumbnail ? `<img class="thumb" src="${esc(room.thumbnail)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="thumb"></span>`;
+            return `<div class="row">${thumb}<div class="who"><div><strong>${esc(st?.name || room.name)}</strong><span class="sub">${esc(path)}</span></div></div>
+<div class="span"><span class="cell-label">${a.colAccess}</span><div class="chips">${access}</div></div>
+<div class="span actions"><a class="btn secondary sm" href="/rooms/edit?path=${encodeURIComponent(path)}">${icon("edit")}${a.edit}</a></div></div>`;
         })
         .join("");
-    return layout("Räume", s, "rooms", `${message ? `<div class="msg">${esc(message)}</div>` : ""}${error ? `<div class="msg err">${esc(error)}</div>` : ""}
-<h1>Räume</h1><p class="sub">Alle Maps aus der Map-Storage. Hier legst du fest, wer sie betreten darf und wie sie in der Raumliste heißen. Admins kommen überall rein.</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th></th><th>Raum</th><th>Wer darf rein?</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4">Keine Räume.</td></tr>'}</tbody></table></div>
-${personalRoomsEnabled() ? `<p class="sub">Eigene Zimmer: Jeder kann sich im Spiel unter Menü → Profil ein Zimmer erstellen (Vorlage: <code>${esc(config.personalRoomTemplate!)}</code>).</p>` : `<p class="sub">Eigene Zimmer sind aus (PERSONAL_ROOM_TEMPLATE und MAP_STORAGE_TOKEN setzen).</p>`}`);
+    const personal = rooms.all().filter((r) => r.owner).length;
+    return layout(c, a.roomsTitle, "rooms", `${flash(message)}${flash(error, true)}
+${pageHead(a.roomsTitle, a.roomsCount(list.length, personal), a.roomsSub)}
+<div class="list rooms"><div class="list-head"><span></span><span>${a.colRoom}</span><span>${a.colAccess}</span><span></span></div>
+${rows || `<div class="empty">${icon("rooms")}<span>${a.roomsNone}</span></div>`}</div>
+<p class="hint">${personalRoomsEnabled() ? esc(a.personalOn(config.personalRoomTemplate!)) : esc(a.personalOff)}</p>`);
 }
 
-function roomEditPage(s: Session, path: string, current: RoomSettings | undefined, mapName: string, message?: string): string {
-    const csrf = csrfFor(s);
+function roomEditPage(c: Ctx, path: string, current: RoomSettings | undefined, mapName: string, message?: string): string {
+    const s = c.s!;
+    const a = c.a;
     const st: RoomSettings = current ?? { path, name: null, description: null, access: { everyone: true }, hidden: false, owner: null };
-    return layout(st.name || mapName, s, "rooms", `${message ? `<div class="msg">${esc(message)}</div>` : ""}
-<p><a href="/rooms">← Alle Räume</a></p><h1>${esc(st.name || mapName)}</h1><p class="sub">${esc(path)}${st.owner ? ` · Zimmer von ${esc(nameOf(st.owner))}` : ""}</p>
-<form method="post" action="/rooms/edit?path=${encodeURIComponent(path)}" class="card">
-<input type="hidden" name="csrf" value="${esc(csrf)}">
-<label for="name">Name in der Raumliste</label><input id="name" name="name" type="text" maxlength="60" value="${esc(st.name ?? "")}" placeholder="${esc(mapName)}">
-<label for="description">Beschreibung</label><input id="description" name="description" type="text" maxlength="200" value="${esc(st.description ?? "")}">
-<h2 style="font-size:16px;margin:20px 0 4px">Wer darf rein?</h2>
-${accessFields(st.access, { exclude: st.owner ?? undefined })}
-<div class="checks" style="margin-top:12px"><label><input type="checkbox" name="hidden" value="1"${st.hidden ? " checked" : ""}> In der Raumliste verstecken</label></div>
-<button type="submit">Speichern</button></form>
-${st.owner ? `<form method="post" action="/rooms/delete?path=${encodeURIComponent(path)}" class="card" onsubmit="return confirm('Zimmer wirklich löschen? Die Einrichtung geht verloren.')"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="danger" type="submit">Zimmer löschen</button></form>` : ""}`);
+    return layout(c, st.name || mapName, "rooms", `${flash(message)}
+<a class="crumb" href="/rooms">${icon("back")}${a.allRooms}</a>
+${pageHead(st.name || mapName, path + (st.owner ? ` · ${a.roomOf(nameOf(st.owner))}` : ""))}
+<form method="post" action="/rooms/edit?path=${encodeURIComponent(path)}" class="card">${csrfInput(s)}
+<div class="field"><label for="name">${a.listName}</label><input id="name" name="name" type="text" maxlength="60" value="${esc(st.name ?? "")}" placeholder="${esc(mapName)}"></div>
+<div class="field"><label for="description">${a.description}</label><input id="description" name="description" type="text" maxlength="200" value="${esc(st.description ?? "")}"></div>
+<h2 style="margin-top:22px">${a.colAccess}</h2>
+${accessFields(st.access, { exclude: st.owner ?? undefined, lang: c.lang })}
+<div class="checks" style="margin-top:16px"><label><input type="checkbox" name="hidden" value="1"${st.hidden ? " checked" : ""}> ${a.hideInList}</label></div>
+<button type="submit">${a.save}</button></form>
+${
+    st.owner
+        ? `<form method="post" action="/rooms/delete?path=${encodeURIComponent(path)}" class="card danger" onsubmit="return confirm(${esc(JSON.stringify(a.confirmDeleteRoom))})">${csrfInput(s)}
+<h2>${a.deleteRoom}</h2><p class="hint">${a.deleteRoomHint}</p><button class="danger" type="submit">${icon("trash")}${a.deleteRoom}</button></form>`
+        : ""
+}`);
 }
 
 function layerUrl(url: string): string {
@@ -377,38 +589,55 @@ function layerUrl(url: string): string {
     return config.playUrl ? `${config.playUrl}/${encodeURI(url)}` : url;
 }
 
-function membersPage(s: Session, message?: string): string {
-    const rows = listUsers()
-        .filter((u) => !u.identifier.match(/^[0-9a-f-]{36}$/))
+function membersPage(c: Ctx, message?: string): string {
+    const s = c.s!;
+    const a = c.a;
+    const list = realUsers();
+    let bannedCount = 0;
+    const rows = list
         .map((u) => {
             const details = u.textures ? wokaDetails(u.identifier, u.tags, u.textures) : [];
             const avatar = `<div class="layers">${details.map((d) => `<div style="background-image:url('${esc(layerUrl(d))}')"></div>`).join("")}</div>`;
             const own = personalTag(u.username);
-            const tags = u.tags.map((t) => `<span class="tag${t === config.adminTag ? " admin" : ""}">${esc(t)}</span>`).join("") + (own ? `<br><small class="sub" title="Persönlicher Tag für Bereichsrechte im Karteneditor">${esc(own)}</small>` : "");
             const ban = bans.get(u.identifier);
-            const remove =
-                u.identifier === s.sub
-                    ? ""
-                    : `<form method="post" action="/members/delete" onsubmit="return confirm('${esc(jsString(u.username ?? u.identifier))} aus der Liste entfernen? Ein eigenes Zimmer wird mitgelöscht. Den Account in Authentik löschst du dort.');"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:6px 0 0">Entfernen</button></form>`;
-            const action = ban
-                ? `<form method="post" action="/members/unban"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary" style="margin:0">Entsperren</button></form>`
-                : u.identifier === s.sub
+            if (ban) bannedCount++;
+            const self = u.identifier.toLowerCase() === s.sub.toLowerCase();
+            const name = u.username ?? u.name ?? "–";
+            const roles = [...u.tags]
+                .sort((x, y) => roleStyle(x).order - roleStyle(y).order)
+                .map((tag) => roleChip(tag, c.lang))
+                .join("");
+            const banForm = ban
+                ? `<form method="post" action="/members/unban">${csrfInput(s)}<input type="hidden" name="id" value="${esc(u.identifier)}"><button class="secondary sm">${icon("unlock")}${a.unban}</button></form>`
+                : self
                   ? ""
-                  : `<form method="post" action="/members/ban" onsubmit="const r=prompt('Grund für die Sperre (optional):');if(r===null)return false;this.reason.value=r;return true;"><input type="hidden" name="csrf" value="${esc(csrfFor(s))}"><input type="hidden" name="id" value="${esc(u.identifier)}"><input type="hidden" name="reason"><button class="danger" style="margin:0">Sperren</button></form>`;
-            return `<tr${ban ? ' style="opacity:.6"' : ""}><td>${avatar}</td><td>${esc(u.username ?? u.name ?? "–")}${ban ? `<br><small class="sub">gesperrt${ban.reason ? `: ${esc(ban.reason)}` : ""}</small>` : ""}</td><td>${esc(u.email ?? u.identifier)}</td><td>${tags}</td><td>${esc(u.lastSeen.replace("T", " ").slice(0, 16))}</td><td>${action}${remove}</td></tr>`;
+                  : `<form method="post" action="/members/ban" onsubmit="const r=prompt(${esc(JSON.stringify(a.banReason))});if(r===null)return false;this.reason.value=r;return true;">${csrfInput(s)}<input type="hidden" name="id" value="${esc(u.identifier)}"><input type="hidden" name="reason"><button class="ghost sm">${icon("ban")}${a.ban}</button></form>`;
+            const removeForm = self
+                ? ""
+                : `<form method="post" action="/members/delete" onsubmit="return confirm(${esc(JSON.stringify(a.confirmRemove(name)))});">${csrfInput(s)}<input type="hidden" name="id" value="${esc(u.identifier)}"><button class="ghost sm" title="${a.remove}">${icon("trash")}${a.remove}</button></form>`;
+            const search = `${name} ${u.email ?? u.identifier} ${u.tags.join(" ")} ${own ?? ""}`.toLowerCase();
+            return `<div class="row${ban ? " dim" : ""}" data-search="${esc(search)}">
+<div class="who">${avatar}<div><strong>${esc(name)}${self ? ` <span class="muted small">(${a.you})</span>` : ""}</strong><span class="sub">${esc(u.email ?? u.identifier)}</span>${
+                ban ? `<span class="chip warn" style="margin-top:4px">${a.banned}${ban.reason ? `: ${esc(ban.reason)}` : ""}</span>` : ""
+            }</div></div>
+<div><span class="cell-label">${a.roles}</span><div class="chips">${roles || `<span class="muted small">–</span>`}</div>${own ? `<span class="tagline" title="${a.personalTagTitle}">${esc(own)}</span>` : ""}</div>
+<div class="small muted"><span class="cell-label">${a.lastSeen}</span>${esc(fmtDate(u.lastSeen, a))}</div>
+<div class="actions">${banForm}${removeForm}</div></div>`;
         })
         .join("");
-    return layout("Mitglieder", s, "members", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Mitglieder</h1>
-<p class="sub">Jeder, der WorkAdventure schon einmal eingeloggt betreten hat. Neue Leute erscheinen hier, sobald sie das erste Mal einen Raum betreten. Wer sich nur registriert hat, steht noch nicht hier. Rollen werden in Authentik vergeben (Gruppen mit „wa-“ davor). Wer in Authentik gelöscht wird, bleibt hier stehen, bis du ihn entfernst.</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th>Avatar</th><th>Name</th><th>E-Mail</th><th>Rollen</th><th>Zuletzt da</th><th></th></tr></thead>
-<tbody>${rows || '<tr><td colspan="6">Noch niemand.</td></tr>'}</tbody></table></div>`);
+    return layout(c, a.membersTitle, "members", `${flash(message)}
+${pageHead(a.membersTitle, a.membersCount(list.length, bannedCount), a.membersSub)}
+${list.length > 5 ? `<div class="toolbar"><div class="search">${icon("search")}<input type="search" id="q" placeholder="${a.search}" aria-label="${a.search}"></div></div>` : ""}
+<div class="list members"><div class="list-head"><span>${a.nav.members}</span><span>${a.roles}</span><span>${a.lastSeen}</span><span></span></div>
+${rows || `<div class="empty">${icon("members")}<span>${a.membersNone}</span></div>`}</div>
+<script>const q=document.getElementById("q");q&&q.addEventListener("input",()=>{const v=q.value.trim().toLowerCase();document.querySelectorAll(".members .row").forEach(r=>{r.style.display=!v||r.dataset.search.includes(v)?"":"none"})});</script>`);
 }
 
 function wokaDetails(identifier: string, tags: string[], ids: string[]): string[] {
     const list = wokaListFor({ identifier, tags });
     const urls: string[] = [];
     for (const part of WOKA_PARTS) {
-        for (const c of list[part]?.collections ?? []) for (const t of c.textures) if (ids.includes(t.id)) urls.push(t.url);
+        for (const col of list[part]?.collections ?? []) for (const tex of col.textures) if (ids.includes(tex.id)) urls.push(tex.url);
     }
     return urls;
 }
@@ -418,26 +647,24 @@ function reportText(comment: string): string {
     return comment.replace(/^\s*--\s*Date:.*?--\s*--\s*Reporter:.*?--\s*--\s*Reported:.*?--\s*/s, "").trim() || comment;
 }
 
-function reportsPage(s: Session, message?: string): string {
-    const csrf = csrfFor(s);
+function reportsPage(c: Ctx, message?: string): string {
+    const s = c.s!;
+    const a = c.a;
     const list = listReports();
     const rows = list
         .map(
-            (r) =>
-                `<tr><td>${esc(r.createdAt.replace("T", " ").slice(0, 16))}</td><td>${esc(nameOf(r.reporter))}</td><td>${esc(nameOf(r.reported))}</td><td>${esc(reportText(r.comment))}</td>
-<td><form method="post" action="/reports/${r.id}/delete"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="secondary" style="margin:0" title="Meldung löschen">✕</button></form></td></tr>`,
+            (r) => `<div class="row report"><div class="small muted">${esc(fmtDate(r.createdAt, a))}</div>
+<div><div class="report-who"><span class="muted">${a.reportFrom}</span> <strong>${esc(nameOf(r.reporter))}</strong> · <span class="muted">${a.reportAbout}</span> <strong>${esc(nameOf(r.reported))}</strong></div><p class="comment">${esc(reportText(r.comment))}</p></div>
+<form method="post" action="/reports/${r.id}/delete">${csrfInput(s)}<button class="ghost sm icon-only" title="${a.deleteReport}" aria-label="${a.deleteReport}">${icon("x")}</button></form></div>`,
         )
         .join("");
-    const clearAll = list.length > 1
-        ? `<form method="post" action="/reports/delete" onsubmit="return confirm('Alle Meldungen löschen?')"><input type="hidden" name="csrf" value="${esc(csrf)}"><button class="danger" type="submit">Alle löschen</button></form>`
-        : "";
-    return layout("Meldungen", s, "reports", `${message ? `<div class="msg">${esc(message)}</div>` : ""}<h1>Meldungen</h1><p class="sub">Spieler-Meldungen aus WorkAdventure.</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th>Wann</th><th>Von</th><th>Über</th><th>Kommentar</th><th></th></tr></thead>
-<tbody>${rows || '<tr><td colspan="5">Keine Meldungen.</td></tr>'}</tbody></table>${clearAll}</div>`);
-}
-
-function messagePage(title: string, text: string, link?: [string, string]): string {
-    return layout(title, undefined, "", `<div class="card"><h1>${esc(title)}</h1><p>${esc(text)}</p>${link ? `<a class="button" href="${esc(link[0])}">${esc(link[1])}</a>` : ""}</div>`);
+    const clearAll =
+        list.length > 1
+            ? `<form method="post" action="/reports/delete" onsubmit="return confirm(${esc(JSON.stringify(a.confirmDeleteAll))})">${csrfInput(s)}<button class="ghost sm" type="submit">${icon("trash")}${a.deleteAll}</button></form>`
+            : "";
+    return layout(c, a.reportsTitle, "reports", `${flash(message)}
+${pageHead(a.reportsTitle, a.reportsCount(list.length), a.reportsSub, clearAll)}
+<div class="list reports">${rows || `<div class="empty">${icon("reports")}<span>${a.reportsNone}</span></div>`}</div>`);
 }
 
 // ---------- visit card (public, shown inside WorkAdventure) ----------
@@ -511,8 +738,8 @@ ${await personalRoomSection(viewer, accessToken!, lang, await roomStyles())}`;
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
 body{padding:16px 20px}code{background:rgba(255,255,255,.12);padding:1px 6px;border-radius:4px}h2{font-size:15px;margin:18px 0 4px}.hint{color:rgba(255,255,255,.65);margin:0 0 10px}
-.frame{display:inline-block;background:rgba(0,0,0,.25);border-radius:8px;max-width:340px}
-.dirs{display:flex;gap:10px;margin-bottom:10px}.walk{position:relative;width:96px;height:96px;border-radius:8px;background:rgba(255,255,255,.08)}
+.frame{display:inline-block;background:rgba(0,0,0,.25);border-radius:8px;max-width:100%}
+.dirs{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}.walk{position:relative;width:96px;height:96px;border-radius:8px;background:rgba(255,255,255,.08)}
 .walk div{position:absolute;inset:0;background-size:288px 384px;image-rendering:pixelated;animation:w .6s steps(3) infinite}
 .d1 div{animation-name:w1}.d2 div{animation-name:w2}.d3 div{animation-name:w3}
 @keyframes w{from{background-position:0 0}to{background-position:-288px 0}}@keyframes w1{from{background-position:0 -96px}to{background-position:-288px -96px}}
@@ -582,9 +809,9 @@ ${
 
 // ---------- login ----------
 
-async function startLogin(res: ServerResponse): Promise<void> {
+async function startLogin(res: ServerResponse, c: Ctx): Promise<void> {
     const endpoints = await oidcEndpoints();
-    if (!endpoints?.authorization_endpoint) return html(res, 503, messagePage("Anmeldung nicht möglich", "Der Login-Server ist gerade nicht erreichbar."));
+    if (!endpoints?.authorization_endpoint) return html(res, 503, messagePage(c, c.a.loginUnavailableTitle, c.a.loginUnavailable));
     const state = b64(randomBytes(16));
     const verifier = b64(randomBytes(32));
     const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -601,11 +828,12 @@ async function startLogin(res: ServerResponse): Promise<void> {
     redirect(res, url.toString(), [cookie(FLOW_COOKIE, sign({ state, verifier, exp: Date.now() + 10 * 60_000 }), 600)]);
 }
 
-async function finishLogin(req: IncomingMessage, res: ServerResponse, query: URLSearchParams): Promise<void> {
+async function finishLogin(req: IncomingMessage, res: ServerResponse, query: URLSearchParams, c: Ctx): Promise<void> {
+    const a = c.a;
     const flow = verify<{ state: string; verifier: string; exp: number }>(cookies(req)[FLOW_COOKIE]);
     const code = query.get("code");
     if (!flow || !code || query.get("state") !== flow.state) {
-        return html(res, 400, messagePage("Anmeldung abgelaufen", "Bitte noch einmal anmelden.", ["/login", "Anmelden"]));
+        return html(res, 400, messagePage(c, a.loginExpiredTitle, a.loginExpired, [["/login", a.login]]));
     }
     const endpoints = await oidcEndpoints();
     if (!endpoints?.token_endpoint || !endpoints.userinfo_endpoint) throw new Error("OpenID provider without token/userinfo endpoint");
@@ -621,7 +849,7 @@ async function finishLogin(req: IncomingMessage, res: ServerResponse, query: URL
     });
     if (!tokenRes.ok) {
         console.warn("token exchange failed:", tokenRes.status, (await tokenRes.text()).slice(0, 300));
-        return html(res, 400, messagePage("Anmeldung fehlgeschlagen", "Der Login-Server hat die Anmeldung abgelehnt.", ["/login", "Nochmal versuchen"]));
+        return html(res, 400, messagePage(c, a.loginFailedTitle, a.loginFailed, [["/login", a.tryAgain]]));
     }
     const { access_token } = (await tokenRes.json()) as { access_token?: string };
     const infoRes = await fetch(endpoints.userinfo_endpoint, { headers: { Authorization: `Bearer ${access_token}` }, signal: AbortSignal.timeout(10_000) });
@@ -632,7 +860,7 @@ async function finishLogin(req: IncomingMessage, res: ServerResponse, query: URL
     const clearFlow = cookie(FLOW_COOKIE, "", 0);
     if (!identity.tags.includes(config.adminTag)) {
         res.setHeader("Set-Cookie", clearFlow);
-        return html(res, 403, messagePage("Kein Zugriff", `Dieser Bereich ist nur für die Rolle „${config.adminTag}“.`));
+        return html(res, 403, messagePage(c, a.noAccessTitle, a.noAccess(config.adminTag)));
     }
     users.saveProfile(sub, identity);
     const session: Session = { sub, name: identity.username ?? identity.name ?? sub, tags: identity.tags, exp: Date.now() + SESSION_HOURS * 3600_000 };
@@ -642,6 +870,14 @@ async function finishLogin(req: IncomingMessage, res: ServerResponse, query: URL
 // ---------- router ----------
 
 const WOKA_ID = /^custom-[a-z0-9]{12}$/;
+const LANG_COOKIE = "wa_admin_lang";
+
+/** Admin UI language: the switch in the sidebar (cookie) wins, otherwise the browser language. */
+function adminLang(req: IncomingMessage): Lang {
+    const chosen = cookies(req)[LANG_COOKIE];
+    if (chosen === "de" || chosen === "en") return chosen;
+    return matchLang(req.headers["accept-language"]) ?? "de";
+}
 
 export async function handleUi(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -732,44 +968,56 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
         }
     }
 
-    if (p === "/login") return startLogin(res);
-    if (p === "/callback") return finishLogin(req, res, url.searchParams);
+    // ----- admin UI -----
+    const lang = adminLang(req);
+    const a = adminText(lang);
+    const session = verify<Session>(cookies(req)[SESSION_COOKIE]);
+    const ctx: Ctx = { lang, a, path: p + url.search, s: session && session.tags.includes(config.adminTag) ? session : undefined };
+
+    if (p === "/lang") {
+        const to = url.searchParams.get("to");
+        const back = url.searchParams.get("back") ?? "/";
+        const target = back.startsWith("/") && !back.startsWith("//") && !back.startsWith("/\\") ? back : "/";
+        if (to !== "de" && to !== "en") return redirect(res, target);
+        return redirect(res, target, [cookie(LANG_COOKIE, to, 365 * 24 * 3600)]);
+    }
+    if (p === "/login") return startLogin(res, ctx);
+    if (p === "/callback") return finishLogin(req, res, url.searchParams, ctx);
     if (p === "/logout") {
         // Only ends the admin session. Going back to "/" would log in again silently through the
         // still active Authentik session, so show a page instead and offer to log out there too.
         const endSession = (await oidcEndpoints())?.end_session_endpoint;
         res.setHeader("Set-Cookie", cookie(SESSION_COOKIE, "", 0));
-        return html(res, 200, layout("Abgemeldet", undefined, "", `<div class="card"><h1>Abgemeldet</h1>
-<p>Du bist aus der Admin-Oberfläche abgemeldet.</p>
-<a class="button" href="/login">Wieder anmelden</a>
-${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" href="${esc(endSession)}">Auch bei Authentik abmelden</a>` : ""}</div>`));
+        const links: [string, string, string?][] = [["/login", a.loginAgain]];
+        if (endSession) links.push([endSession, a.alsoAuthentik, "secondary"]);
+        return html(res, 200, messagePage({ ...ctx, s: undefined, path: "/logout" }, a.loggedOutTitle, a.loggedOut, links));
     }
 
-    const session = verify<Session>(cookies(req)[SESSION_COOKIE]);
-    if (!session || !session.tags.includes(config.adminTag)) {
+    if (!ctx.s) {
         if (req.method === "GET") return redirect(res, "/login");
-        return sendJson(res, 401, { error: "Bitte neu anmelden." });
+        return sendJson(res, 401, { error: a.pleaseLogin });
     }
+    const s = ctx.s;
 
     if (req.method === "GET" && (p === "/" || p === "")) return redirect(res, "/wokas");
-    if (req.method === "GET" && p === "/wokas") return html(res, 200, wokasPage(session));
-    if (req.method === "GET" && p === "/members") return html(res, 200, membersPage(session));
-    if (req.method === "GET" && p === "/rooms") return html(res, 200, await roomsPage(session));
+    if (req.method === "GET" && p === "/wokas") return html(res, 200, wokasPage(ctx));
+    if (req.method === "GET" && p === "/members") return html(res, 200, membersPage(ctx));
+    if (req.method === "GET" && p === "/rooms") return html(res, 200, await roomsPage(ctx));
     if (p === "/rooms/edit" || p === "/rooms/delete") {
         const path = url.searchParams.get("path") ?? "";
         const known = (await listRooms().catch(() => [])).find((r) => r.roomUrl === "/~/" + path);
         const current = rooms.get(path);
-        if (!known && !current) return html(res, 404, layout("Nicht gefunden", session, "rooms", "<p>Diesen Raum gibt es nicht.</p>"));
+        if (!known && !current) return html(res, 404, layout(ctx, a.notFound, "rooms", `${pageHead(a.notFound)}<div class="card empty">${icon("rooms")}<span>${a.roomGone}</span></div>`));
         const mapName = known?.name ?? path;
-        if (req.method === "GET" && p === "/rooms/edit") return html(res, 200, roomEditPage(session, path, current, mapName));
+        if (req.method === "GET" && p === "/rooms/edit") return html(res, 200, roomEditPage(ctx, path, current, mapName));
         if (req.method === "POST") {
             const form = await readForm(req);
-            checkCsrf(session, form.get("csrf"));
+            checkCsrf(s, form.get("csrf"), a);
             if (p === "/rooms/delete") {
-                if (!current?.owner) throw new HttpError(400, "Nur eigene Zimmer können gelöscht werden.");
+                if (!current?.owner) throw new HttpError(400, a.onlyOwnRooms);
                 if (config.mapStorageToken) await deleteMap(path).catch((err) => console.warn("map-storage delete failed:", err));
                 rooms.remove(path);
-                return html(res, 200, await roomsPage(session, "Zimmer gelöscht."));
+                return html(res, 200, await roomsPage({ ...ctx, path: "/rooms" }, a.roomDeleted));
             }
             const updated: RoomSettings = {
                 path,
@@ -781,14 +1029,14 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
                 style: current?.style ?? null,
             };
             rooms.save(updated);
-            return html(res, 200, roomEditPage(session, path, updated, mapName, "Gespeichert."));
+            return html(res, 200, roomEditPage(ctx, path, updated, mapName, a.saved));
         }
     }
     if (req.method === "POST" && p === "/members/delete") {
         const form = await readForm(req);
-        checkCsrf(session, form.get("csrf"));
+        checkCsrf(s, form.get("csrf"), a);
         const id = form.get("id") ?? "";
-        if (!id || id.toLowerCase() === session.sub.toLowerCase()) throw new HttpError(400, "Dieses Mitglied kann nicht entfernt werden.");
+        if (!id || id.toLowerCase() === s.sub.toLowerCase()) throw new HttpError(400, a.cannotRemove);
         const name = nameOf(id);
         const room = rooms.byOwner(id);
         if (room) {
@@ -796,75 +1044,75 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
             rooms.remove(room.path);
         }
         users.remove(id);
-        console.info(`member ${id} removed by ${session.sub}`);
-        return html(res, 200, membersPage(session, `${name} wurde entfernt${room ? " (samt Zimmer)" : ""}.`));
+        console.info(`member ${id} removed by ${s.sub}`);
+        return html(res, 200, membersPage({ ...ctx, path: "/members" }, a.removed(name, !!room)));
     }
     if (req.method === "POST" && (p === "/members/ban" || p === "/members/unban")) {
         const form = await readForm(req);
-        checkCsrf(session, form.get("csrf"));
+        checkCsrf(s, form.get("csrf"), a);
         const id = form.get("id") ?? "";
-        if (!id) throw new HttpError(400, "Kein Mitglied angegeben.");
+        if (!id) throw new HttpError(400, a.noMember);
         if (p === "/members/ban") {
-            bans.add(id, (form.get("reason") ?? "").trim().slice(0, 500) || null, session.sub);
-            return html(res, 200, membersPage(session, `${nameOf(id)} ist gesperrt. Die Sperre greift beim nächsten Betreten eines Raums.`));
+            bans.add(id, (form.get("reason") ?? "").trim().slice(0, 500) || null, s.sub);
+            return html(res, 200, membersPage({ ...ctx, path: "/members" }, a.bannedMsg(nameOf(id))));
         }
         bans.remove(id);
-        return html(res, 200, membersPage(session, `${nameOf(id)} ist entsperrt.`));
+        return html(res, 200, membersPage({ ...ctx, path: "/members" }, a.unbannedMsg(nameOf(id))));
     }
-    if (req.method === "GET" && p === "/reports") return html(res, 200, reportsPage(session));
+    if (req.method === "GET" && p === "/reports") return html(res, 200, reportsPage(ctx));
 
     if (req.method === "POST" && p === "/wokas") {
-        checkCsrf(session, req.headers["x-csrf"] as string | undefined);
+        checkCsrf(s, req.headers["x-csrf"] as string | undefined, a);
         const name = decodeURIComponent(String(req.headers["x-woka-name"] ?? "")).trim().slice(0, 40);
         const part = String(req.headers["x-woka-part"] ?? "woka");
-        if (!name) throw new HttpError(400, "Bitte einen Namen angeben.");
-        if (!(WOKA_PARTS as readonly string[]).includes(part)) throw new HttpError(400, "Unbekannte Art.");
-        const data = await readBody(req, 512 * 1024);
-        checkWokaPng(data);
+        if (!name) throw new HttpError(400, a.nameMissing);
+        if (!(WOKA_PARTS as readonly string[]).includes(part)) throw new HttpError(400, a.unknownType);
+        const data = await readBody(req, 512 * 1024, a.tooBig);
+        checkWokaPng(data, a);
         const id = `custom-${randomBytes(8).toString("hex").slice(0, 12)}`;
         // New avatars are only visible to the uploader until access is set.
-        customWokas.add({ id, part, name, url: storeImage(id, data), access: { users: [session.sub] }, position: 0 });
-        console.info(`woka ${id} uploaded by ${session.sub}`);
+        customWokas.add({ id, part, name, url: storeImage(id, data), access: { users: [s.sub] }, position: 0 });
+        console.info(`woka ${id} uploaded by ${s.sub}`);
         return sendJson(res, 201, { id });
     }
 
     if (req.method === "POST" && p === "/reports/delete") {
-        checkCsrf(session, (await readForm(req)).get("csrf"));
+        checkCsrf(s, (await readForm(req)).get("csrf"), a);
         reports.removeAll();
-        return html(res, 200, reportsPage(session, "Alle Meldungen gelöscht."));
+        return html(res, 200, reportsPage({ ...ctx, path: "/reports" }, a.allReportsDeleted));
     }
     const report = /^\/reports\/(\d+)\/delete$/.exec(p);
     if (req.method === "POST" && report) {
-        checkCsrf(session, (await readForm(req)).get("csrf"));
+        checkCsrf(s, (await readForm(req)).get("csrf"), a);
         reports.remove(Number(report[1]));
-        return html(res, 200, reportsPage(session, "Meldung gelöscht."));
+        return html(res, 200, reportsPage({ ...ctx, path: "/reports" }, a.reportDeleted));
     }
 
     const woka = /^\/wokas\/([^/]+)(\/image|\/delete)?$/.exec(p);
     if (woka && WOKA_ID.test(woka[1]!)) {
         const current = customWokas.get(woka[1]!);
-        if (!current) return html(res, 404, layout("Nicht gefunden", session, "wokas", "<p>Diesen Avatar gibt es nicht mehr.</p>"));
+        if (!current) return html(res, 404, layout(ctx, a.notFound, "wokas", `${pageHead(a.notFound)}<div class="card empty">${icon("wokas")}<span>${a.avatarGone}</span></div>`));
 
         if (req.method === "GET" && !woka[2]) {
-            return html(res, 200, wokaEditPage(session, current, url.searchParams.has("neu") ? "Hochgeladen. Lege jetzt fest, wer ihn benutzen darf." : undefined));
+            return html(res, 200, wokaEditPage(ctx, current, url.searchParams.has("neu") ? a.uploaded : undefined));
         }
         if (req.method === "POST" && woka[2] === "/image") {
-            checkCsrf(session, req.headers["x-csrf"] as string | undefined);
-            const data = await readBody(req, 512 * 1024);
-            checkWokaPng(data);
+            checkCsrf(s, req.headers["x-csrf"] as string | undefined, a);
+            const data = await readBody(req, 512 * 1024, a.tooBig);
+            checkWokaPng(data, a);
             customWokas.update({ ...current, url: storeImage(current.id, data) });
             return sendJson(res, 200, { id: current.id });
         }
         if (req.method === "POST" && woka[2] === "/delete") {
             const form = await readForm(req);
-            checkCsrf(session, form.get("csrf"));
+            checkCsrf(s, form.get("csrf"), a);
             customWokas.remove(current.id);
             fs.rmSync(path.join(WOKA_DIR, `${current.id}.png`), { force: true });
-            return html(res, 200, wokasPage(session, `„${current.name}“ wurde gelöscht.`));
+            return html(res, 200, wokasPage({ ...ctx, path: "/wokas" }, a.avatarDeleted(current.name)));
         }
         if (req.method === "POST" && !woka[2]) {
             const form = await readForm(req);
-            checkCsrf(session, form.get("csrf"));
+            checkCsrf(s, form.get("csrf"), a);
             const part = form.get("part") ?? current.part;
             const extra = (form.get("more") ?? "").split(/[\s,;]+/).map((v) => v.trim()).filter((v) => v.includes("@"));
             const updated: CustomWoka = {
@@ -873,14 +1121,14 @@ ${endSession ? ` <a class="button" style="background:#3d3360;color:var(--text)" 
                 part: (WOKA_PARTS as readonly string[]).includes(part) ? part : current.part,
                 access: {
                     everyone: form.get("everyone") === "1",
-                    tags: form.getAll("tags").filter((t) => t !== ""),
+                    tags: form.getAll("tags").filter((tag) => tag !== ""),
                     users: [...new Set([...form.getAll("users"), ...extra])],
                 },
             };
             customWokas.update(updated);
-            return html(res, 200, wokaEditPage(session, updated, "Gespeichert."));
+            return html(res, 200, wokaEditPage(ctx, updated, a.saved));
         }
     }
 
-    return html(res, 404, layout("Nicht gefunden", session, "", "<p>Diese Seite gibt es nicht.</p>"));
+    return html(res, 404, layout(ctx, a.notFound, "", `${pageHead(a.notFound)}<div class="card empty">${icon("home")}<span>${a.pageNotFound}</span><a class="btn secondary" href="/">WorkAdventure Admin</a></div>`));
 }

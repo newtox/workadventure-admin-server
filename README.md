@@ -15,7 +15,7 @@ WorkAdventure without an admin API keeps the chosen woka only in the browser and
 - **Bans** from the admin UI or WorkAdventure's own ban button.
 - **Visit cards** with role badges, and a **profile tab** (`OPENID_PROFILE_SCREEN_PROVIDER=<PUBLIC_URL>/profile`).
 - Member and tag search, player reports, and chat upload limits for the uploader.
-- **German and English** for everything players see (visit cards, profile tab, ban and access messages): the game language WorkAdventure sends wins, otherwise the browser language. The admin UI is German.
+- **German and English** for everything players see (visit cards, profile tab, ban and access messages): the game language WorkAdventure sends wins, otherwise the browser language. The admin UI has both languages too, with a switch in the sidebar.
 
 No runtime dependencies: Node.js 22 with the built-in `node:sqlite`.
 
@@ -76,6 +76,7 @@ The UI runs on a second port (`UI_PORT`, default `3001`) and is only enabled whe
 | `ADMIN_TAG` | `admin` | Role required to log in |
 | `PLAY_URL` | – | WorkAdventure URL, to show official wokas in the member list |
 | `UI_PORT` | `3001` | |
+| `TIME_ZONE` | `TZ`, else `Europe/Berlin` | Time zone for dates in the admin UI |
 
 Woka images must be PNGs of 96 × 128 pixels: 3 walking frames side by side, 4 directions below each other (down, left, right, up). A complete character uses the type `woka`; parts (`body`, `eyes`, `hair`, `clothes`, `hat`, `accessory`) are layered over each other like the official ones.
 

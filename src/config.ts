@@ -88,6 +88,8 @@ export const config = {
     /** Public URL of the admin UI, e.g. https://workadventure-admin.example.com. Enables the UI. */
     publicUrl: optional("PUBLIC_URL") ? trimSlash(optional("PUBLIC_URL")!) : undefined,
     uiPort: Number(str("UI_PORT", "3001")),
+    /** Time zone for dates in the admin UI (TZ of the container, otherwise Europe/Berlin). */
+    timeZone: str("TIME_ZONE", process.env.TZ || "Europe/Berlin"),
     oidcClientId: optional("OIDC_CLIENT_ID"),
     oidcClientSecret: optional("OIDC_CLIENT_SECRET"),
     oidcScope: str("OIDC_SCOPE", "openid email profile wa"),
