@@ -71,6 +71,11 @@ export const config = {
     mapStorageToken: optional("MAP_STORAGE_TOKEN"),
     /** Map that is copied for each personal room, e.g. "maps/zimmer.wam". Enables personal rooms. */
     personalRoomTemplate: optional("PERSONAL_ROOM_TEMPLATE"),
+    /**
+     * Folder in the map storage for personal rooms. It must not be a folder that maps are uploaded to:
+     * an upload removes every map in its folder that is not part of the upload.
+     */
+    personalRoomDir: str("PERSONAL_ROOM_DIR", "zimmer").replace(/^\/+|\/+$/g, ""),
     /** Roles that may create a personal room (empty = everyone who is logged in). */
     personalRoomTags: list("PERSONAL_ROOM_TAGS", ""),
 

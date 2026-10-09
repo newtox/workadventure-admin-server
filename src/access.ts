@@ -1,7 +1,7 @@
 // Who may enter which room, and personal rooms.
 import { config } from "./config.js";
 import { rooms, type Access, type RoomSettings } from "./db.js";
-import { copyMap, deleteMap, listRooms, type RoomDescription } from "./mapStorage.js";
+import { deleteMap, listRooms, mapExists, readMap, writeMap, type RoomDescription } from "./mapStorage.js";
 import type { Viewer } from "./wokas.js";
 import { t, type Lang } from "./i18n.js";
 
@@ -111,40 +111,70 @@ async function stylePath(key: string | null | undefined): Promise<RoomStyle> {
     return styles.find((s) => s.key === key) ?? styles[0]!;
 }
 
-/** Copies the template map in the map storage and registers the owner. */
-export async function createPersonalRoom(owner: string, displayName: string, lang: Lang, styleKey?: string | null): Promise<RoomSettings> {
-    const existing = rooms.byOwner(owner);
-    if (existing) return existing;
-    const template = config.personalRoomTemplate!;
-    const style = await stylePath(styleKey);
-    const dir = template.includes("/") ? template.slice(0, template.lastIndexOf("/") + 1) : "";
-    const base = `${dir}zimmer-${slugify(displayName)}`;
+/**
+ * The style's map with absolute URLs, so that the copy works from the personal room folder.
+ * Personal rooms live in their own folder because an upload of maps removes every map in
+ * the uploaded folder that is not part of the upload.
+ */
+async function styleMap(style: RoomStyle): Promise<Record<string, unknown>> {
+    const wam = await readMap(style.path);
+    const base = `${config.publicMapStorageUrl}/${style.path}`;
+    if (typeof wam.mapUrl === "string") wam.mapUrl = new URL(wam.mapUrl, base).toString();
+    const metadata = wam.metadata as Record<string, unknown> | undefined;
+    if (metadata && typeof metadata.thumbnail === "string") metadata.thumbnail = new URL(metadata.thumbnail, base).toString();
+    return wam;
+}
 
-    for (let i = 0; i < 20; i++) {
+const inPersonalDir = (path: string) => path.startsWith(config.personalRoomDir + "/");
+
+async function freePersonalPath(displayName: string): Promise<string> {
+    const taken = new Set((await listRooms()).map((r) => r.roomUrl.replace(/^\/~\//, "")));
+    const base = `${config.personalRoomDir}/zimmer-${slugify(displayName)}`;
+    for (let i = 0; i < 50; i++) {
         const path = `${base}${i ? `-${i + 1}` : ""}.wam`;
-        if (rooms.get(path)) continue;
-        if (!(await copyMap(style.path, path))) continue; // a map with this name already exists
-        const settings: RoomSettings = {
-            path,
-            name: t(lang).roomName(displayName),
-            description: null,
-            access: { everyone: false, tags: [], users: [] },
-            hidden: false,
-            owner,
-            style: style.key,
-        };
-        rooms.save(settings);
-        return settings;
+        if (!rooms.get(path) && !taken.has(path)) return path;
     }
     throw new Error("No free room name");
 }
 
-/** Replaces a personal room's map with a fresh copy of another style. Everything placed in it is lost. */
-export async function changeRoomStyle(room: RoomSettings, styleKey: string): Promise<RoomSettings> {
+/** Creates the owner's room from a style and registers it. */
+export async function createPersonalRoom(owner: string, displayName: string, lang: Lang, styleKey?: string | null): Promise<RoomSettings> {
+    const existing = rooms.byOwner(owner);
+    if (existing) return existing;
     const style = await stylePath(styleKey);
-    await deleteMap(room.path);
-    if (!(await copyMap(style.path, room.path))) throw new Error(`map-storage still has ${room.path}`);
-    const updated = { ...room, style: style.key };
+    const path = await freePersonalPath(displayName);
+    await writeMap(path, await styleMap(style));
+    const settings: RoomSettings = {
+        path,
+        name: t(lang).roomName(displayName),
+        description: null,
+        access: { everyone: false, tags: [], users: [] },
+        hidden: false,
+        owner,
+        style: style.key,
+    };
+    rooms.save(settings);
+    return settings;
+}
+
+/**
+ * Replaces a personal room's map with a fresh one of the given style (everything placed in it is lost),
+ * or recreates it when its map has gone missing. Rooms from older versions move to the personal room folder.
+ */
+export async function changeRoomStyle(room: RoomSettings, styleKey: string, displayName: string): Promise<RoomSettings> {
+    const style = await stylePath(styleKey);
+    const path = inPersonalDir(room.path) ? room.path : await freePersonalPath(displayName);
+    await writeMap(path, await styleMap(style));
+    if (path !== room.path) {
+        await deleteMap(room.path).catch(() => undefined);
+        rooms.remove(room.path);
+    }
+    const updated = { ...room, path, style: style.key };
     rooms.save(updated);
     return updated;
+}
+
+/** Whether the map of a personal room still exists in the map storage. */
+export async function roomMapExists(room: RoomSettings): Promise<boolean> {
+    return mapExists(room.path).catch(() => true);
 }

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 import { bans, customWokas, listCustomWokas, listReports, listUsers, reports, rooms, users, type Access, type CustomWoka, type RoomSettings } from "./db.js";
-import { changeRoomStyle, createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled, roomStyles, type RoomStyle } from "./access.js";
+import { changeRoomStyle, createPersonalRoom, mayCreatePersonalRoom, personalRoomsEnabled, roomMapExists, roomStyles, type RoomStyle } from "./access.js";
 import { deleteMap, listRooms } from "./mapStorage.js";
 import { HttpError, sendJson } from "./http.js";
 import { identityFromClaims, oidcEndpoints } from "./identity.js";
@@ -500,7 +500,7 @@ async function profilePage(accessToken: string | null, browserLang: Lang, messag
             .join("")}</div>
 <p class="hint">${text.avatarHint}</p>
 ${tag ? `<h2>${text.yourTag}</h2><p class="hint"><code>${esc(tag)}</code> – ${text.yourTagHint}</p>` : ""}
-${personalRoomSection(viewer, accessToken!, lang, await roomStyles())}`;
+${await personalRoomSection(viewer, accessToken!, lang, await roomStyles())}`;
     }
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}
@@ -540,7 +540,7 @@ function stylePicker(styles: RoomStyle[], lang: Lang, selected: string | null | 
         .join("")}</div>`;
 }
 
-function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string, lang: Lang, styles: RoomStyle[]): string {
+async function personalRoomSection(viewer: { identifier: string; tags: string[] }, accessToken: string, lang: Lang, styles: RoomStyle[]): Promise<string> {
     if (!personalRoomsEnabled()) return "";
     const text = t(lang);
     const room = rooms.byOwner(viewer.identifier);
@@ -549,6 +549,11 @@ function personalRoomSection(viewer: { identifier: string; tags: string[] }, acc
         if (!mayCreatePersonalRoom(viewer)) return "";
         return `<h2>${text.yourRoom}</h2><div class="box"><p class="hint" style="margin:0">${text.roomIntro}</p>
 <form method="post" action="/profile/room">${token}${styles.length > 1 ? `<p class="hint" style="margin:10px 0 0">${text.chooseStyle}</p>` : ""}${stylePicker(styles, lang, null)}<button class="btn" type="submit">${text.createRoom}</button></form></div>`;
+    }
+    if (!(await roomMapExists(room))) {
+        return `<h2>${text.yourRoom}</h2><div class="box"><p class="hint" style="margin:0">${text.roomMissing}</p>
+<form method="post" action="/profile/room/style">${token}<input type="hidden" name="confirm" value="1">${stylePicker(styles, lang, room.style ?? "holz")}
+<button class="btn" type="submit">${text.restoreRoom}</button></form></div>`;
     }
     const enter = config.playUrl ? `${config.playUrl}/~/${room.path.split("/").map(encodeURIComponent).join("/")}` : `/~/${room.path}`;
     return `<h2>${text.yourRoom}</h2><div class="box">
@@ -689,18 +694,30 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse): Promi
                 const lang: Lang = stored === "de" || stored === "en" ? stored : browserLang;
                 if (!mayCreatePersonalRoom(viewer)) throw new HttpError(403, t(lang).forbidden);
                 const name = identity.username ?? identity.name ?? identity.email.split("@")[0]!;
-                const room = await createPersonalRoom(identity.email, name, lang, form.get("style"));
+                let room;
+                try {
+                    room = await createPersonalRoom(identity.email, name, lang, form.get("style"));
+                } catch (err) {
+                    console.error(`personal room for ${identity.email} failed:`, err);
+                    return sendProfile(accessToken, (text) => text.failed);
+                }
                 console.info(`personal room ${room.path} created for ${identity.email}`);
                 return sendProfile(accessToken, (text) => text.roomCreated);
             }
             const room = rooms.byOwner(identity.email);
             if (!room) return sendProfile(accessToken);
             if (p === "/profile/room/style") {
-                const style = form.get("style");
-                if (!style || form.get("confirm") !== "1" || style === (room.style ?? "holz")) return sendProfile(accessToken);
-                const updated = await changeRoomStyle(room, style);
-                console.info(`personal room ${room.path} of ${identity.email} switched to style ${updated.style}`);
-                return sendProfile(accessToken, (text) => text.styleChanged);
+                const style = form.get("style") ?? "holz";
+                const missing = !(await roomMapExists(room));
+                if (form.get("confirm") !== "1" || (!missing && style === (room.style ?? "holz"))) return sendProfile(accessToken);
+                try {
+                    const updated = await changeRoomStyle(room, style, identity.username ?? identity.name ?? identity.email.split("@")[0]!);
+                    console.info(`personal room ${updated.path} of ${identity.email} ${missing ? "recreated" : "switched"} with style ${updated.style}`);
+                    return sendProfile(accessToken, (text) => text.styleChanged);
+                } catch (err) {
+                    console.error(`style change for ${identity.email} failed:`, err);
+                    return sendProfile(accessToken, (text) => text.failed);
+                }
             }
             const access = accessFromForm(form, true);
             access.users = (access.users ?? []).filter((u) => u.toLowerCase() !== identity.email!.toLowerCase());

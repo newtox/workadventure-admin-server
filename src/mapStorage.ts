@@ -19,25 +19,36 @@ let cached: { at: number; rooms: RoomDescription[] } | undefined;
 
 const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
-/** Copies a map inside the map storage. Returns false when the destination already exists. */
-export async function copyMap(source: string, destination: string): Promise<boolean> {
-    const res = await fetch(`${config.internalMapStorageUrl}/copy`, {
-        method: "POST",
+/** Reads a map file (.wam) from the map storage. */
+export async function readMap(path: string): Promise<Record<string, unknown>> {
+    const res = await fetch(`${config.internalMapStorageUrl}/${encodePath(path)}`, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`map-storage read of ${path} failed: ${res.status}`);
+    return (await res.json()) as Record<string, unknown>;
+}
+
+/** Writes (creates or replaces) a map file (.wam) in the map storage. */
+export async function writeMap(path: string, content: unknown): Promise<void> {
+    const res = await fetch(`${config.internalMapStorageUrl}/${encodePath(path)}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.mapStorageToken}` },
-        body: JSON.stringify({ source, destination }),
-        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify(content),
+        signal: AbortSignal.timeout(30_000),
     });
     cached = undefined;
-    if (res.status === 409) return false;
-    if (!res.ok) throw new Error(`map-storage copy failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
-    return true;
+    if (!res.ok) throw new Error(`map-storage write of ${path} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+}
+
+/** Whether a map exists in the map storage (fresh list, not cached). */
+export async function mapExists(path: string): Promise<boolean> {
+    cached = undefined;
+    return (await listRooms()).some((r) => r.roomUrl === "/~/" + path);
 }
 
 export async function deleteMap(path: string): Promise<void> {
     const res = await fetch(`${config.internalMapStorageUrl}/${encodePath(path)}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${config.mapStorageToken}` },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(30_000),
     });
     cached = undefined;
     if (!res.ok && res.status !== 404) throw new Error(`map-storage delete failed: ${res.status}`);
