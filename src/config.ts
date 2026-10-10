@@ -37,6 +37,8 @@ export const config = {
 
     /** OpenID issuer (Authentik application), used to read live roles via the userinfo endpoint. */
     oidcIssuer: optional("OIDC_ISSUER"),
+    /** Where "log out" in WorkAdventure ends up: the provider's end-session URL (default from discovery), or "off". */
+    oidcLogoutUrl: optional("OIDC_LOGOUT_URL"),
     /** Claim in the userinfo answer that holds the roles. */
     tagsClaim: str("OIDC_TAGS_CLAIM", "tags"),
     usernameClaim: str("OIDC_USERNAME_CLAIM", "preferred_username"),

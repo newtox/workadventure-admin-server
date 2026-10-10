@@ -78,6 +78,7 @@ The UI runs on a second port (`UI_PORT`, default `3001`) and is only enabled whe
 | `OIDC_SCOPE` | `openid email profile wa` | Must include the scope that provides the roles claim |
 | `ADMIN_TAG` | `admin` | Role required to log in |
 | `PLAY_URL` | – | WorkAdventure URL, to show official wokas in the member list |
+| `OIDC_LOGOUT_URL` | end-session URL from discovery | Where WorkAdventure's "log out" leads after revoking the token, so the Authentik session ends as well. `off` keeps WorkAdventure's default (players are logged straight back in) |
 | `UI_PORT` | `3001` | |
 | `TIME_ZONE` | `TZ`, else `Europe/Berlin` | Time zone for dates in the admin UI |
 | `SITE_NAME` | `WorkAdventure` | Name in link previews (Discord etc.) and the browser tab, combined with the room name |

@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { bans, reports, rooms, users } from "./db.js";
 import { canEnter, isOwner, roomsVisibleFor, storagePath } from "./access.js";
 import { HttpError, queryList, queryString, readJson, sendEmpty, sendJson } from "./http.js";
-import { identityFromAccessToken } from "./identity.js";
+import { identityFromAccessToken, oidcEndpoints } from "./identity.js";
 import { visitCardUrl } from "./cards.js";
 import { listRooms } from "./mapStorage.js";
 import { langFrom, matchLang, t } from "./i18n.js";
@@ -119,6 +119,17 @@ async function metatags(path: string | undefined) {
     };
 }
 
+/**
+ * "Log out" in WorkAdventure: its /logout revokes the token and then follows "redirect" to the provider's
+ * end-session page, so the Authentik session ends too and the player is not logged straight back in.
+ */
+async function logoutRedirectUrl(): Promise<string | null> {
+    if (config.oidcLogoutUrl === "off") return null;
+    const endSession = config.oidcLogoutUrl ?? (await oidcEndpoints())?.end_session_endpoint;
+    if (!endSession) return null;
+    return `${config.playUrl ?? ""}/logout?redirect=${encodeURIComponent(endSession)}`;
+}
+
 async function mapDetails(playUri: URL) {
     if (playUri.pathname === "/") {
         return { redirectUrl: new URL(config.startRoomUrl, playUri).toString() };
@@ -150,7 +161,7 @@ async function mapDetails(playUri: URL) {
         authenticationMandatory: config.disableAnonymous,
         group: wamUrl ? "default" : null,
         contactPage: null,
-        opidLogoutRedirectUrl: null,
+        opidLogoutRedirectUrl: await logoutRedirectUrl(),
         opidWokaNamePolicy: config.wokaNamePolicy,
         canReport: config.enableReport,
         loadingLogo: null,
