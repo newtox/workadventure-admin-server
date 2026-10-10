@@ -397,12 +397,13 @@ function knownTags(): string[] {
 }
 
 /**
- * Matrix localpart for a username, exactly as Synapse maps the OIDC localpart_template
- * (synapse.types.map_username_to_mxid_localpart): ASCII lower case, every other character as "=xx", no leading "_".
+ * Matrix localpart for a username, exactly as Synapse creates it from the OIDC localpart_template
+ * "{{ user.preferred_username | replace(' ', '') }}": spaces dropped ("Graf Cedric" → "grafcedric"), then
+ * synapse.types.map_username_to_mxid_localpart: ASCII lower case, every other character as "=xx", no leading "_".
  */
 export function matrixLocalpart(username: string): string {
     let out = "";
-    for (let byte of new TextEncoder().encode(username)) {
+    for (let byte of new TextEncoder().encode(username.replace(/ /g, ""))) {
         if (byte >= 0x41 && byte <= 0x5a) byte += 0x20; // only ASCII letters are lowered, like Synapse does
         const ch = String.fromCharCode(byte);
         out += /[a-z0-9_\-./+]/.test(ch) ? ch : "=" + byte.toString(16).padStart(2, "0");
