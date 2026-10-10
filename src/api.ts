@@ -337,7 +337,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             const found = users.search(queryString(q, "searchText") ?? "", 500);
             return sendJson(res, 200, {
                 total: found.length,
-                members: found.map((u) => ({ uuid: u.identifier, wokaName: u.username ?? undefined, email: u.email ?? u.identifier, chatId: matrixId(u.identifier) ?? undefined, tags: u.tags })),
+                members: found.map((u) => ({ uuid: u.identifier, wokaName: u.username ?? undefined, email: null, chatId: matrixId(u) ?? undefined, tags: u.tags })),
             });
         }
 
@@ -368,14 +368,30 @@ function knownTags(): string[] {
 }
 
 /**
- * Matrix id of a logged-in user: "@" + email with "@" replaced by "_" + ":" + MATRIX_DOMAIN,
- * in lower case like Synapse creates it (Matrix ids cannot contain capital letters).
+ * Matrix localpart for a username, exactly as Synapse maps the OIDC localpart_template
+ * (synapse.types.map_username_to_mxid_localpart): ASCII lower case, every other character as "=xx", no leading "_".
  */
-export function matrixId(identifier: string): string | null {
-    if (!config.matrixDomain || !identifier || /^[0-9a-f-]{36}$/.test(identifier)) return null;
-    return `@${identifier.toLowerCase().replace("@", "_")}:${config.matrixDomain}`;
+export function matrixLocalpart(username: string): string {
+    let out = "";
+    for (let byte of new TextEncoder().encode(username)) {
+        if (byte >= 0x41 && byte <= 0x5a) byte += 0x20; // only ASCII letters are lowered, like Synapse does
+        const ch = String.fromCharCode(byte);
+        out += /[a-z0-9_\-./+]/.test(ch) ? ch : "=" + byte.toString(16).padStart(2, "0");
+    }
+    return out.replace(/^_/, "=5f");
+}
+
+/**
+ * Matrix id of a logged-in user: "@" + their username + ":" + MATRIX_DOMAIN. Synapse creates the account
+ * from the same username (localpart_template "{{ user.preferred_username }}"), so e-mail addresses never
+ * show up in Matrix ids.
+ */
+export function matrixId(user: { username: string | null } | undefined): string | null {
+    if (!config.matrixDomain || !user?.username) return null;
+    return `@${matrixLocalpart(user.username)}:${config.matrixDomain}`;
 }
 
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
-    return { id: u.identifier, name: u.username ?? u.name ?? null, email: u.email ?? u.identifier, visitCardUrl: visitCardUrl(u.identifier), chatID: matrixId(u.identifier) };
+    // No e-mail: WorkAdventure shows it next to the name in member pickers, where every player can see it.
+    return { id: u.identifier, name: u.username ?? u.name ?? null, email: null, visitCardUrl: visitCardUrl(u.identifier), chatID: matrixId(u) };
 }
