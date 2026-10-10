@@ -44,6 +44,22 @@ function error(code: string, title: string, subtitle: string, details: string) {
     return { status: "error", type: "error", code, title, subtitle, details, image: "" } as const;
 }
 
+/**
+ * Id that WorkAdventure shows and shares with other players for a logged-in user. WorkAdventure itself knows
+ * players by their e-mail, and would show it to everyone in a meeting's participant list, so other players
+ * get this opaque id instead ("u-" + 24 hex characters, stable per e-mail).
+ */
+export function publicId(identifier: string): string {
+    if (!identifier.includes("@")) return identifier; // anonymous uuids and OpenID "sub" values stay as they are
+    return "u-" + createHmac("sha256", config.apiToken).update("player-id:" + identifier.toLowerCase()).digest("hex").slice(0, 24);
+}
+
+/** E-mail identifier behind an id WorkAdventure sends back (public id, or the e-mail itself). */
+export function identifierOf(id: string): string {
+    if (!/^u-[0-9a-f]{24}$/.test(id)) return id;
+    return users.search("", 100_000).find((u) => publicId(u.identifier) === id)?.identifier ?? id;
+}
+
 // Anonymous users get a random uuid as identifier, logged-in users their email (or OpenID "sub").
 const isAnonymous = (identifier: string | undefined, accessToken: string | undefined) => !identifier || !accessToken;
 
@@ -184,7 +200,8 @@ async function mapDetails(playUri: URL) {
 
 async function roomAccess(query: URLSearchParams, acceptLanguage: string | undefined) {
     const text = t(langFrom(acceptLanguage));
-    const identifier = queryString(query, "userIdentifier");
+    const rawIdentifier = queryString(query, "userIdentifier");
+    const identifier = rawIdentifier ? identifierOf(rawIdentifier) : undefined;
     const accessToken = queryString(query, "accessToken");
     const playUri = parseUrl(queryString(query, "playUri"), "playUri");
     const requestedTextures = queryList(query, "characterTextureIds");
@@ -238,7 +255,7 @@ async function roomAccess(query: URLSearchParams, acceptLanguage: string | undef
     return {
         status: "ok",
         email: anonymous ? null : (identifier ?? null),
-        userUuid: identifier ?? "",
+        userUuid: identifier ? publicId(identifier) : "",
         tags: viewer.tags,
         visitCardUrl: anonymous || !identifier ? null : visitCardUrl(identifier),
         isCharacterTexturesValid: characterTextures !== undefined,
@@ -286,7 +303,8 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             return sendJson(res, 200, await roomAccess(q, req.headers["accept-language"]));
 
         case "GET /api/woka/list": {
-            const identifier = queryString(q, "uuid");
+            const uuid = queryString(q, "uuid");
+            const identifier = uuid ? identifierOf(uuid) : undefined;
             const known = identifier ? users.get(identifier) : undefined;
             return sendJson(res, 200, wokaListFor({ identifier: identifier ?? "", tags: known?.tags ?? [] }, known?.locale === "de" ? "de" : "en"));
         }
@@ -296,7 +314,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
         case "POST /api/save-textures": {
             const body = await readJson(req);
-            const identifier = typeof body.userIdentifier === "string" ? body.userIdentifier : undefined;
+            const identifier = typeof body.userIdentifier === "string" ? identifierOf(body.userIdentifier) : undefined;
             const textures = Array.isArray(body.textures) ? body.textures.filter((t): t is string => typeof t === "string") : [];
             if (!identifier) throw new HttpError(400, "Missing userIdentifier");
             const known = users.get(identifier);
@@ -307,7 +325,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
         case "POST /api/save-companion-texture": {
             const body = await readJson(req);
-            const identifier = typeof body.userIdentifier === "string" ? body.userIdentifier : undefined;
+            const identifier = typeof body.userIdentifier === "string" ? identifierOf(body.userIdentifier) : undefined;
             const texture = typeof body.texture === "string" ? body.texture : null;
             if (!identifier) throw new HttpError(400, "Missing userIdentifier");
             if (texture !== null && !companionDetail(texture)) throw new HttpError(400, "Unknown companion");
@@ -324,9 +342,9 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
         case "POST /api/ban": {
             const body = await readJson(req);
             const s = (v: unknown) => (typeof v === "string" ? v : "");
-            const target = s(body.uuidToBan);
+            const target = identifierOf(s(body.uuidToBan));
             if (!target) throw new HttpError(400, "Missing uuidToBan");
-            bans.add(target, s(body.message).slice(0, 500) || null, s(body.byUserUuid) || null);
+            bans.add(target, s(body.message).slice(0, 500) || null, identifierOf(s(body.byUserUuid)) || null);
             console.info(`ban: ${s(body.byUserUuid)} banned ${target}`);
             return sendJson(res, 200, {});
         }
@@ -348,14 +366,14 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             const found = users.search(queryString(q, "searchText") ?? "", 500);
             return sendJson(res, 200, {
                 total: found.length,
-                members: found.map((u) => ({ uuid: u.identifier, wokaName: u.username ?? undefined, email: null, chatId: matrixId(u) ?? undefined, tags: u.tags })),
+                members: found.map((u) => ({ uuid: publicId(u.identifier), wokaName: u.username ?? undefined, email: null, chatId: matrixId(u) ?? undefined, tags: u.tags })),
             });
         }
 
         case "POST /api/report": {
             const body = await readJson(req);
             const s = (v: unknown) => (typeof v === "string" ? v : "");
-            reports.add(s(body.reportedUserUuid), s(body.reporterUserUuid), s(body.reportedUserComment).slice(0, 2000), s(body.reportWorldSlug) || null);
+            reports.add(identifierOf(s(body.reportedUserUuid)), identifierOf(s(body.reporterUserUuid)), s(body.reportedUserComment).slice(0, 2000), s(body.reportWorldSlug) || null);
             console.info(`report: ${s(body.reporterUserUuid)} reported ${s(body.reportedUserUuid)}`);
             return sendJson(res, 200, {});
         }
@@ -364,7 +382,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
     const member = /^GET \/api\/members\/(.+)$/.exec(route);
     if (member) {
-        const id = decodeURIComponent(member[1]!);
+        const id = identifierOf(decodeURIComponent(member[1]!));
         // Users who have not entered a room since the admin server runs are not in the database yet.
         const user = users.get(id) ?? { identifier: id, username: null, name: null, email: id.includes("@") ? id : null };
         return sendJson(res, 200, toMember(user));
@@ -404,5 +422,5 @@ export function matrixId(user: { username: string | null } | undefined): string 
 
 function toMember(u: { identifier: string; username: string | null; name: string | null; email: string | null }) {
     // No e-mail: WorkAdventure shows it next to the name in member pickers, where every player can see it.
-    return { id: u.identifier, name: u.username ?? u.name ?? null, email: null, visitCardUrl: visitCardUrl(u.identifier), chatID: matrixId(u) };
+    return { id: publicId(u.identifier), name: u.username ?? u.name ?? null, email: null, visitCardUrl: visitCardUrl(u.identifier), chatID: matrixId(u) };
 }
