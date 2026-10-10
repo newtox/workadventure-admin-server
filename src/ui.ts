@@ -756,7 +756,12 @@ function cardPage(identifier: string, lang: Lang): string | undefined {
     if (!user) return undefined;
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>${CARD_CSS}</style></head><body>${cardMarkup(user, lang)}
-<script>parent.postMessage({type:"cvIframeSize",data:{w:document.body.scrollWidth,h:document.getElementById("card").offsetHeight+4}},"*");</script>
+<script>
+// WorkAdventure hides the frame until it has loaded, so the first measurement can be 0: report the size again
+// whenever it changes (also when the frame becomes visible), and never report an empty card.
+(function(){var c=document.getElementById("card");function s(){var h=c.offsetHeight;if(h>0)parent.postMessage({type:"cvIframeSize",data:{w:document.body.scrollWidth,h:h+4}},"*")}
+s();window.addEventListener("load",s);if(window.ResizeObserver)new ResizeObserver(s).observe(c)})();
+</script>
 </body></html>`;
 }
 
